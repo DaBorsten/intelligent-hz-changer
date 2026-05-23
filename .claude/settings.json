@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Read(//c/Users/DaBorsten/Projekte/TogMic/src-tauri/src/**)"
+    ]
+  }
+}

@@ -5,6 +5,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "updater:default",
+    "process:default",
+    "dialog:default",
+    "notification:default",
     "opener:default"
   ]
 }
