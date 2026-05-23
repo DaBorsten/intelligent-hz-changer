@@ -191,7 +191,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                 return (
                   <div key={name} className="flex items-center gap-2.5">
                     <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                         isRunning ? "bg-red-500 shadow-sm shadow-red-500/30" : "bg-slate-200 dark:bg-slate-700"
                       }`}
                     >
@@ -209,7 +209,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                       {name}
                     </span>
                     <span
-                      className={`text-xs flex-shrink-0 font-medium ${
+                      className={`text-xs shrink-0 font-medium ${
                         isRunning ? "text-slate-600 dark:text-slate-300" : "text-slate-400 dark:text-slate-500"
                       }`}
                     >
@@ -276,17 +276,17 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
             ))}
           </div>
         </div>
-        <div className="space-y-3 min-h-[80px]">
+        <div className="space-y-3 min-h-20">
           {filteredLog.length === 0 ? (
             <p className="text-sm text-slate-400 dark:text-slate-500 italic">Noch keine Ereignisse.</p>
           ) : (
             filteredLog.map((entry) => (
               <div key={entry.id} className="flex items-center gap-3 text-sm">
-                <span className="text-slate-400 dark:text-slate-500 text-xs font-mono w-10 flex-shrink-0 tabular-nums">
+                <span className="text-slate-400 dark:text-slate-500 text-xs font-mono w-10 shrink-0 tabular-nums">
                   {entry.timestamp}
                 </span>
                 <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  className={`w-2 h-2 rounded-full shrink-0 ${
                     entry.event_type === "process_start"
                       ? "bg-red-500"
                       : "bg-slate-400 dark:bg-slate-500"
@@ -294,13 +294,13 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                 />
                 <span className="flex-1 text-slate-700 dark:text-slate-300 truncate">{entry.message}</span>
                 {entry.hz_from != null && entry.hz_to != null && (
-                  <span className="text-xs text-slate-500 dark:text-slate-400 flex-shrink-0 tabular-nums font-mono">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 tabular-nums font-mono">
                     {entry.hz_from} → {entry.hz_to} Hz
                   </span>
                 )}
                 {entry.event_type !== "system" && (
                   <span
-                    className={`text-xs font-bold px-2.5 py-0.5 rounded-full flex-shrink-0 ${
+                    className={`text-xs font-bold px-2.5 py-0.5 rounded-full shrink-0 ${
                       entry.event_type === "process_start"
                         ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400"
                         : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
