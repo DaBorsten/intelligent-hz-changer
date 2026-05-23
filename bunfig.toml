@@ -1,0 +1,4 @@
+[install]
+# Only allow packages that have been published for at least 3 days.
+# This protects against supply-chain attacks via freshly published malicious packages.
+minimumReleaseAge = 259200
