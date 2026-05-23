@@ -31,7 +31,7 @@
         "https://github.com/DaBorsten/intelligent-hz-changer/releases/latest/download/latest.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzOEIxRDNENjU5QzY2NEYKUldSUFpweGxQUjJMa3l4bTFiS3UvT1lZTEc4RVRzMXk3L1RFVVUrTTc2eUREQkdxcmhLOWs5ZmIK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyMkY2MEREMEE5NTE3RDYKUldUV0Y1VUszV0F2WXFKU1FvUW13T29hWnFPY3UyalRocklTQkM3RGdKOTJJVHlEd2xMYWU4S0IK",
       "windows": {
         "installMode": "passive"
       }
