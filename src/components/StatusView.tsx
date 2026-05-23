@@ -15,7 +15,6 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const [currentHz, setCurrentHz] = useState<number | null>(null);
   const [mode, setMode] = useState<"STANDARD" | "GAME">("STANDARD");
   const [monitorLabel, setMonitorLabel] = useState<string>("");
-  const [monitorDevice, setMonitorDevice] = useState<string>("");
   const [runningProcesses, setRunningProcesses] = useState<string[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | "hz" | "process">("all");
@@ -98,7 +97,6 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       .then((mons) => {
         const mon = mons.find((m: any) => m.device_name === monitorName);
         setMonitorLabel(mon?.friendly_name || monitorName);
-        setMonitorDevice(mon?.device_name || monitorName);
       })
       .catch(() => setMonitorLabel(monitorName));
   }, [monitorName]);
