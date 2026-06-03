@@ -41,11 +41,21 @@ impl WatchConfig {
 }
 
 pub struct WatchState {
-    running: Arc<Mutex<HashSet<String>>>,
+    /// PID → lowercased process name of every currently-running watched instance.
+    /// Keyed by PID so multiple instances of the same process are tracked independently
+    /// (closing one instance must not reset Hz while another is still running).
+    running: Arc<Mutex<HashMap<u32, String>>>,
     pub config: Arc<Mutex<WatchConfig>>,
     process_counts: Arc<Mutex<HashMap<String, u32>>>,
     pub enabled: Arc<AtomicBool>,
-    pub needs_rescan: Arc<AtomicBool>,
+    /// Serializes every refresh-rate transition so a "Hz up" and a concurrent
+    /// "Hz down" can never apply out of order and leave the display in a state
+    /// that contradicts the live `running` set.
+    pub hz_lock: Arc<Mutex<()>>,
+    /// PIDs that already have a live `watch_exit` thread. Shared so the WMI event
+    /// loop and the config-change rescan dedup against the same set and never
+    /// spawn two exit-watchers for one PID.
+    pub watching: Arc<Mutex<HashSet<u32>>>,
 }
 
 impl WatchState {
@@ -56,11 +66,12 @@ impl WatchState {
             .map(|p| (p.to_lowercase(), 0u32))
             .collect();
         Self {
-            running: Arc::new(Mutex::new(HashSet::new())),
+            running: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(config)),
             process_counts: Arc::new(Mutex::new(counts)),
             enabled: Arc::new(AtomicBool::new(true)),
-            needs_rescan: Arc::new(AtomicBool::new(false)),
+            hz_lock: Arc::new(Mutex::new(())),
+            watching: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -73,9 +84,11 @@ impl WatchState {
     }
 
     /// Returns true only when the first watched process starts (trigger Hz up).
-    pub fn on_process_start(&self, name: &str) -> bool {
+    /// Idempotent per PID: a PID already tracked (e.g. re-detected after a config
+    /// rescan) neither re-counts nor re-triggers.
+    pub fn on_process_start(&self, name: &str, pid: u32) -> bool {
         let name_lower = name.to_lowercase();
-        let config = self.config.lock().unwrap();
+        let config = self.config.lock().unwrap_or_else(|e| e.into_inner());
         let is_watched = config
             .watched_processes
             .iter()
@@ -85,39 +98,61 @@ impl WatchState {
             return false;
         }
 
-        let mut counts = self.process_counts.lock().unwrap();
-        *counts.entry(name_lower.clone()).or_insert(0) += 1;
-        drop(counts);
-
-        let mut running = self.running.lock().unwrap();
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        if running.contains_key(&pid) {
+            return false;
+        }
         let was_empty = running.is_empty();
-        running.insert(name_lower);
+        running.insert(pid, name_lower.clone());
+        drop(running);
+
+        let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
+        *counts.entry(name_lower).or_insert(0) += 1;
+
         was_empty
     }
 
-    /// Returns true only when the last watched process stops (trigger Hz down).
-    pub fn on_process_stop(&self, name: &str) -> bool {
-        let name_lower = name.to_lowercase();
-        let mut running = self.running.lock().unwrap();
-        if running.remove(&name_lower) {
-            running.is_empty()
+    /// Returns true only when the last watched instance stops (trigger Hz down).
+    pub fn on_process_stop(&self, pid: u32) -> bool {
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(name) = running.remove(&pid) {
+            let empty = running.is_empty();
+            drop(running);
+            // Keep the live per-name counter in sync with the running set.
+            let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(c) = counts.get_mut(&name) {
+                *c = c.saturating_sub(1);
+            }
+            empty
         } else {
             false
         }
     }
 
+    /// True while at least one watched instance is running. Used to decide the
+    /// target Hz and to stop `test_hz` from clobbering a watcher-driven rate.
+    pub fn is_any_running(&self) -> bool {
+        !self
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+
     pub fn get_running(&self) -> Vec<String> {
-        self.running.lock().unwrap().iter().cloned().collect()
+        let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        let unique: HashSet<String> = running.values().cloned().collect();
+        unique.into_iter().collect()
     }
 
     pub fn get_process_counts(&self) -> HashMap<String, u32> {
-        self.process_counts.lock().unwrap().clone()
+        self.process_counts.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Atomically replaces config and clears the running set.
     /// Returns true if there were active processes before that are no longer watched — caller should reset Hz.
     pub fn update_config(&self, config: WatchConfig) -> bool {
-        let mut counts = self.process_counts.lock().unwrap();
+        let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
         for p in &config.watched_processes {
             counts.entry(p.to_lowercase()).or_insert(0);
         }
@@ -127,19 +162,28 @@ impl WatchState {
             .iter()
             .map(|p| p.to_lowercase())
             .collect();
-        *self.config.lock().unwrap() = config;
-        let mut running = self.running.lock().unwrap();
-        // Only remove processes no longer in the new config — keep still-watched ones active.
-        let removed_active: Vec<String> = running
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        // Only remove instances whose process is no longer in the new config —
+        // keep still-watched ones active.
+        let was_active = !running.is_empty();
+        let removed: Vec<String> = running
             .iter()
-            .filter(|p| !new_watched.contains(*p))
-            .cloned()
+            .filter(|(_pid, name)| !new_watched.contains(*name))
+            .map(|(_pid, name)| name.clone())
             .collect();
-        for p in &removed_active {
-            running.remove(p);
+        running.retain(|_pid, name| new_watched.contains(name));
+        // Caller should reset Hz only if removing unwatched instances left nothing running.
+        let had_active = was_active && running.is_empty();
+        drop(running);
+        // Decrement counters for the instances we just dropped so the live
+        // per-name count never drifts above the running set.
+        let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
+        for name in removed {
+            if let Some(c) = counts.get_mut(&name) {
+                *c = c.saturating_sub(1);
+            }
         }
-        let had_active = !removed_active.is_empty() && running.is_empty();
-        self.needs_rescan.store(true, Ordering::Relaxed);
         had_active
     }
 }

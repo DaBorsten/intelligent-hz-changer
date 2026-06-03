@@ -60,7 +60,32 @@ mod inner {
         instance_name: String,
     }
 
+    // Friendly names only change when displays are physically reconnected, so a
+    // short-lived cache avoids rebuilding a COM/WMI connection on every monitor
+    // enumeration (which the UI polls repeatedly).
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static WMI_NAME_CACHE: Mutex<Option<(Instant, HashMap<String, String>)>> = Mutex::new(None);
+    const WMI_NAME_TTL: Duration = Duration::from_secs(3);
+
     fn get_wmi_monitor_names() -> HashMap<String, String> {
+        if let Ok(guard) = WMI_NAME_CACHE.lock() {
+            if let Some((ts, cached)) = guard.as_ref() {
+                if ts.elapsed() < WMI_NAME_TTL {
+                    return cached.clone();
+                }
+            }
+        }
+
+        let map = query_wmi_monitor_names();
+
+        if let Ok(mut guard) = WMI_NAME_CACHE.lock() {
+            *guard = Some((Instant::now(), map.clone()));
+        }
+        map
+    }
+
+    fn query_wmi_monitor_names() -> HashMap<String, String> {
         let mut map = HashMap::new();
         let com_lib = COMLibrary::new()
             .unwrap_or_else(|_| unsafe { COMLibrary::assume_initialized() });

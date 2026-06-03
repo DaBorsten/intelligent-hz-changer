@@ -27,14 +27,18 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+      className={`relative inline-flex items-center w-11 h-6 rounded-full shrink-0 btn-press ${
         checked ? "bg-red-500" : "bg-slate-300 dark:bg-slate-600"
       }`}
+      style={{ transition: "background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)" }}
     >
       <span
-        className={`inline-block w-4 h-4 bg-white rounded-full shadow transition-transform ${
-          checked ? "translate-x-6" : "translate-x-1"
-        }`}
+        className="inline-block w-4 h-4 bg-white rounded-full shadow"
+        style={{
+          transform: checked ? "translateX(1.5rem)" : "translateX(0.25rem)",
+          transition: "transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+        }}
       />
     </button>
   );
@@ -180,6 +184,95 @@ function UpdateDialog({
   );
 }
 
+function ThemeSegmentedControl({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const activeIndex = options.findIndex((o) => o.value === value);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const isDragging = dragIndex !== null;
+  const displayIndex = isDragging ? dragIndex : activeIndex;
+
+  const [pillStyle, setPillStyle] = useState<{ left: number; width: number }>({ left: 0, width: 0 });
+
+  useEffect(() => {
+    const btn = buttonRefs.current[displayIndex];
+    if (btn) {
+      setPillStyle({ left: btn.offsetLeft, width: btn.offsetWidth });
+    }
+  }, [displayIndex]);
+
+  function getIndexFromX(x: number): number {
+    const el = containerRef.current;
+    if (!el) return activeIndex;
+    const rect = el.getBoundingClientRect();
+    const segW = rect.width / options.length;
+    const idx = Math.floor((x - rect.left) / segW);
+    return Math.max(0, Math.min(options.length - 1, idx));
+  }
+
+  function onPointerDown(e: React.PointerEvent) {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setDragIndex(getIndexFromX(e.clientX));
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!isDragging) return;
+    setDragIndex(getIndexFromX(e.clientX));
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    if (!isDragging) return;
+    const idx = getIndexFromX(e.clientX);
+    onChange(options[idx].value);
+    setDragIndex(null);
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex bg-black/5 dark:bg-white/5 rounded-lg p-0.5 select-none cursor-pointer"
+      style={{ touchAction: "none" }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      {/* sliding pill — positioned to exactly match the active button */}
+      <div
+        className="absolute top-0.5 bottom-0.5 rounded-md bg-white dark:bg-[#1c1c1c] shadow-sm pointer-events-none"
+        style={{
+          left: pillStyle.left,
+          width: pillStyle.width,
+          transition: isDragging
+            ? "left 80ms cubic-bezier(0.23, 1, 0.32, 1)"
+            : "left 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+        }}
+      />
+      {options.map((opt, i) => (
+        <button
+          key={opt.value}
+          ref={(el) => { buttonRefs.current[i] = el; }}
+          onClick={() => !isDragging && onChange(opt.value)}
+          className={`relative z-10 flex-1 px-3 py-1 rounded-md text-xs font-medium transition-colors duration-150 ${
+            displayIndex === i
+              ? "text-slate-900 dark:text-slate-100"
+              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsTab() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT);
   const [version, setVersion] = useState("");
@@ -289,21 +382,11 @@ export function SettingsTab() {
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
             <SettingRow label="Theme" description="Farbschema der App">
-              <div className="flex gap-1 bg-black/5 dark:bg-white/5 rounded-lg p-0.5">
-                {themeOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => patch({ theme: opt.value })}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                      settings.theme === opt.value
-                        ? "bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-slate-100 shadow-sm"
-                        : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+              <ThemeSegmentedControl
+                options={themeOptions}
+                value={settings.theme}
+                onChange={(v) => patch({ theme: v })}
+              />
             </SettingRow>
           </div>
         </section>

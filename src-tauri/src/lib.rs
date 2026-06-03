@@ -53,13 +53,37 @@ fn get_current_hz(monitor_name: String) -> u32 {
     display::get_current_refresh_rate(&monitor_name)
 }
 
+/// Monotonic token so only the most recent `test_hz` call reverts the rate.
+/// Without it, overlapping tests would each restore their own stale "current"
+/// value after 5 s, clobbering one another.
+static TEST_HZ_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[tauri::command]
-fn test_hz(monitor_name: String, hz: u32) -> Result<(), String> {
-    let current = display::get_current_refresh_rate(&monitor_name);
-    display::set_refresh_rate(&monitor_name, hz)?;
+fn test_hz(
+    monitor_name: String,
+    hz: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let ws = Arc::clone(&state.watch_state);
+    let current = {
+        let _guard = ws.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let current = display::get_current_refresh_rate(&monitor_name);
+        display::set_refresh_rate(&monitor_name, hz)?;
+        current
+    };
+    let token = TEST_HZ_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let mn = monitor_name.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(5));
+        if TEST_HZ_TOKEN.load(std::sync::atomic::Ordering::Relaxed) != token {
+            return; // a newer test superseded this one
+        }
+        // Don't revert if the watcher now owns the rate (a watched process is
+        // running) — that value must win over our stale pre-test snapshot.
+        if ws.is_any_running() {
+            return;
+        }
+        let _guard = ws.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
         let _ = display::set_refresh_rate(&mn, current);
     });
     Ok(())
@@ -118,25 +142,18 @@ fn save_config(
 
     let should_reset = state.watch_state.update_config(config);
     if should_reset && state.watch_state.is_enabled() {
-        let cfg = state.watch_state.config.lock().unwrap();
-        let monitor = cfg.monitor_name.clone();
-        let hz = cfg.default_hz_for(&monitor);
-        drop(cfg);
-        let prev_hz = crate::display::get_current_refresh_rate(&monitor);
-        if let Err(e) = crate::display::set_refresh_rate(&monitor, hz) {
-            eprintln!("set_refresh_rate error: {e}");
-        }
-        let _ = app.emit(
-            "hz-changed",
-            serde_json::json!({
-                "current_hz": hz,
-                "hz_from": prev_hz,
-                "hz_to": hz,
-                "reason": "Prozess aus Liste entfernt (kein aktiver Prozess mehr)",
-                "event_type": "process_stop"
-            }),
+        watcher::sync_hz(
+            &state.watch_state,
+            &app,
+            "Prozess aus Liste entfernt (kein aktiver Prozess mehr)".into(),
+            None,
+            "process_stop",
         );
     }
+    // A process just added to the list may already be running — no WMI creation
+    // event will ever fire for it, so reconcile the running set once now.
+    #[cfg(windows)]
+    watcher::reconcile(&state.watch_state, &app);
     Ok(())
 }
 
@@ -147,6 +164,30 @@ fn set_enabled(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     state.watch_state.set_enabled(value);
+    persist_enabled(&app, value);
+
+    // Reflect pause/resume on the hardware immediately: resuming re-applies the
+    // correct rate for the current running set; pausing restores the default so
+    // the user isn't left stuck at game Hz while the watcher is inactive.
+    if value {
+        watcher::sync_hz(&state.watch_state, &app, "Aktiviert".into(), None, "system");
+    } else {
+        let (monitor, def) = {
+            let cfg = state.watch_state.config.lock().unwrap_or_else(|e| e.into_inner());
+            let m = cfg.monitor_name.clone();
+            let d = cfg.default_hz_for(&m);
+            (m, d)
+        };
+        watcher::set_monitor_hz(
+            &state.watch_state,
+            &app,
+            &monitor,
+            def,
+            "Pausiert".into(),
+            None,
+            "system",
+        );
+    }
 
     // Update tray tooltip + menu item label
     if let Some(tray_id) = state.tray_id.get() {
@@ -193,6 +234,26 @@ fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+fn read_settings(app: &tauri::AppHandle) -> settings::AppSettings {
+    settings_path(app)
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Persists only the `enabled` flag without disturbing other settings.
+fn persist_enabled(app: &tauri::AppHandle, value: bool) {
+    let mut s = read_settings(app);
+    s.enabled = value;
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(json) = serde_json::to_string_pretty(&s) {
+            let _ = std::fs::write(dir.join("settings.json"), json);
+        }
+    }
+}
+
 #[tauri::command]
 fn load_settings(app: tauri::AppHandle) -> settings::AppSettings {
     let mut s = if let Ok(path) = settings_path(&app) {
@@ -217,10 +278,14 @@ fn load_settings(app: tauri::AppHandle) -> settings::AppSettings {
 
 #[tauri::command]
 fn save_settings(
-    s: settings::AppSettings,
+    mut s: settings::AppSettings,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    // `enabled` is owned by set_enabled/the tray, not the settings UI — keep the
+    // live runtime value so a settings save can never silently re-enable the watcher.
+    s.enabled = state.watch_state.is_enabled();
+
     // Persist close_to_tray in runtime state
     state.close_to_tray.store(
         s.close_to_tray,
@@ -247,62 +312,81 @@ fn save_settings(
 #[tauri::command]
 async fn get_process_icon(process_name: String) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let exe_path = find_exe_path(&process_name)?;
-        process_icon::extract_icon_base64(&exe_path)
+        #[cfg(windows)]
+        {
+            let exe_path = find_exe_path(&process_name)?;
+            process_icon::extract_icon_base64(&exe_path)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = process_name;
+            None
+        }
     })
     .await
     .unwrap_or(None)
 }
 
+/// Snapshot of running processes via WMI: (Name, ExecutablePath).
+/// Replaces spawning `powershell.exe` — no process startup cost and no string
+/// interpolation, so a process name can never be used for command injection.
+#[cfg(windows)]
+fn query_processes() -> Vec<(String, Option<String>)> {
+    use serde::Deserialize;
+    use wmi::{COMLibrary, WMIConnection};
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct Proc {
+        name: String,
+        executable_path: Option<String>,
+    }
+
+    // spawn_blocking threads may be reused and already COM-initialized.
+    let com = COMLibrary::new().unwrap_or_else(|_| unsafe { COMLibrary::assume_initialized() });
+    let Ok(con) = WMIConnection::new(com) else {
+        return vec![];
+    };
+    let results: Result<Vec<Proc>, _> = con.query();
+    results
+        .map(|v| v.into_iter().map(|p| (p.name, p.executable_path)).collect())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 async fn get_all_running_processes() -> Vec<String> {
     tauri::async_runtime::spawn_blocking(|| {
-        use std::process::Command;
         #[cfg(windows)]
-        use std::os::windows::process::CommandExt;
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Get-Process | Where-Object { $_.Name -ne '' } | Select-Object -ExpandProperty Name -Unique | Sort-Object",
-            ])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
-        let Ok(out) = output else { return vec![] };
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(|l| format!("{}.exe", l.trim()))
-            .filter(|s| s.len() > 4)
-            .collect()
+        {
+            let mut names: Vec<String> = query_processes()
+                .into_iter()
+                .map(|(n, _)| n)
+                .filter(|n| !n.is_empty())
+                .collect();
+            names.sort_unstable_by_key(|n| n.to_lowercase());
+            names.dedup_by_key(|n| n.to_lowercase());
+            names
+        }
+        #[cfg(not(windows))]
+        Vec::<String>::new()
     })
     .await
     .unwrap_or_default()
 }
 
+/// Resolves a process name to its executable path via WMI.
+/// `ExecutablePath` is populated regardless of privilege level (unlike
+/// `Get-Process .Path`, which is null for elevated processes like Vanguard).
+#[cfg(windows)]
 fn find_exe_path(process_name: &str) -> Option<String> {
-    use std::process::Command;
-    #[cfg(windows)]
-    use std::os::windows::process::CommandExt;
-    // Get-Process .Path returns null for elevated processes (e.g. Valorant/Vanguard).
-    // WMI ExecutablePath works regardless of privilege level.
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "(Get-CimInstance Win32_Process -Filter \"Name = '{}'\" | Select-Object -First 1).ExecutablePath",
-                process_name
-            ),
-        ])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output()
-        .ok()?;
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    query_processes()
+        .into_iter()
+        .find(|(name, path)| {
+            name.eq_ignore_ascii_case(process_name)
+                && path.as_deref().is_some_and(|p| !p.is_empty())
+        })
+        .and_then(|(_, path)| path)
 }
 
 #[tauri::command]
@@ -337,17 +421,24 @@ pub fn run() {
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-            // System tray
-            let toggle_item = MenuItem::with_id(app, "toggle", "Deaktivieren", true, None::<&str>)?;
+            // Load persisted settings up front so the tray reflects the restored state.
+            let app_settings = read_settings(app.handle());
+
+            // System tray — label shows the action, so it is inverted vs. enabled state.
+            let toggle_label = if app_settings.enabled { "Deaktivieren" } else { "Aktivieren" };
+            let toggle_item = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
             let sep_item = PredefinedMenuItem::separator(app)?;
             let open_item =
                 MenuItem::with_id(app, "open", "App öffnen", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle_item, &sep_item, &open_item, &quit_item])?;
 
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Intelligent Hz Changer – aktiv")
+            let mut tray_builder = TrayIconBuilder::new()
+                .tooltip(if app_settings.enabled {
+                    "Intelligent Hz Changer – aktiv"
+                } else {
+                    "Intelligent Hz Changer – pausiert"
+                })
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => {
@@ -378,8 +469,11 @@ pub fn run() {
                             let _ = w.set_focus();
                         }
                     }
-                })
-                .build(app)?;
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder.build(app)?;
 
             // Conditionally hide to tray or quit on window close
             if let Some(window) = app.get_webview_window("main") {
@@ -402,11 +496,8 @@ pub fn run() {
             let startup_monitor = config.monitor_name.clone();
             let watch_state = Arc::new(WatchState::new(config));
 
-            let app_settings: settings::AppSettings = app.path().app_config_dir()
-                .ok()
-                .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                .and_then(|json| serde_json::from_str(&json).ok())
-                .unwrap_or_default();
+            // Restore the persisted enabled/paused state across restarts.
+            watch_state.set_enabled(app_settings.enabled);
 
             let tray_id_cell = std::sync::OnceLock::new();
             let _ = tray_id_cell.set(_tray.id().clone());

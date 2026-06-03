@@ -104,14 +104,18 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors shrink-0 ${
+      className={`relative inline-flex items-center w-11 h-6 rounded-full shrink-0 btn-press ${
         checked ? "bg-red-500" : "bg-slate-300 dark:bg-slate-600"
       }`}
+      style={{ transition: "background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)" }}
     >
       <span
-        className={`inline-block w-4 h-4 bg-white rounded-full shadow transition-transform ${
-          checked ? "translate-x-6" : "translate-x-1"
-        }`}
+        className="inline-block w-4 h-4 bg-white rounded-full shadow"
+        style={{
+          transform: checked ? "translateX(1.5rem)" : "translateX(0.25rem)",
+          transition: "transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+        }}
       />
     </button>
   );
@@ -234,11 +238,12 @@ export default function App() {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-t-xl text-sm font-medium transition-all border-t border-x focus:outline-none ${
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-t-xl text-sm font-medium border-t border-x focus:outline-none btn-press ${
                 tab === t.id
                   ? "bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-slate-100 border-black/8 dark:border-white/8 border-b-white dark:border-b-[#1c1c1c]"
                   : "text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200"
               }`}
+              style={{ transition: "color 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)" }}
             >
               {t.icon}
               {t.label}
@@ -248,13 +253,16 @@ export default function App() {
         {/* Hz status pill */}
         <div className="flex items-center gap-1.5 pb-1">
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${headerMode === "Game" ? "bg-red-500" : "bg-slate-400 dark:bg-slate-500"}`}
+            className={`w-2 h-2 rounded-full shrink-0 ${headerMode === "Game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
           />
-          <span className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+          <span
+            key={headerMode}
+            className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap badge-anim"
+          >
             {headerMode}
           </span>
           {headerHz != null && (
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5">
+            <span key={headerHz} className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5 badge-anim">
               {headerHz} Hz
             </span>
           )}
@@ -264,31 +272,31 @@ export default function App() {
       {/* Content */}
       <main className="flex-1 overflow-y-auto bg-white dark:bg-[#1c1c1c] border-t border-black/8 dark:border-white/8">
         <div className="p-5">
-          <div className={tab === "status" ? undefined : "hidden"}>
-            <StatusView
-              monitorName={config.monitor_name}
-              watchedProcesses={config.watched_processes}
-              gameHz={config.game_hz}
-            />
-          </div>
-          <div className={tab === "processes" ? undefined : "hidden"}>
-            <ProcessList
-              processes={config.watched_processes}
-              onChange={(p) => patchConfig({ watched_processes: p }, true)}
-              onSave={save}
-              saving={saving}
-            />
-          </div>
-          <div className={tab === "monitor" ? undefined : "hidden"}>
-            <MonitorConfig
-              config={config}
-              onChange={patchConfig}
-              onSave={save}
-              saving={saving}
-            />
-          </div>
-          <div className={tab === "settings" ? undefined : "hidden"}>
-            <SettingsTab />
+          <div key={`tab-${tab}`} className="tab-content">
+            {tab === "status" && (
+              <StatusView
+                monitorName={config.monitor_name}
+                watchedProcesses={config.watched_processes}
+                gameHz={config.game_hz}
+              />
+            )}
+            {tab === "processes" && (
+              <ProcessList
+                processes={config.watched_processes}
+                onChange={(p) => patchConfig({ watched_processes: p }, true)}
+                onSave={save}
+                saving={saving}
+              />
+            )}
+            {tab === "monitor" && (
+              <MonitorConfig
+                config={config}
+                onChange={patchConfig}
+                onSave={save}
+                saving={saving}
+              />
+            )}
+            {tab === "settings" && <SettingsTab />}
           </div>
         </div>
       </main>

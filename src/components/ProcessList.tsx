@@ -9,6 +9,7 @@ interface Props {
 }
 
 const ICON_CACHE_KEY = "hz-process-icons";
+const ICON_CACHE_MAX = 100;
 
 function loadIconCache(): Record<string, string> {
   try {
@@ -21,6 +22,13 @@ function loadIconCache(): Record<string, string> {
 function saveIconToCache(name: string, icon: string) {
   const cache = loadIconCache();
   cache[name] = icon;
+  // Bound the cache: drop oldest (insertion-order) entries past the cap.
+  const keys = Object.keys(cache);
+  if (keys.length > ICON_CACHE_MAX) {
+    for (const stale of keys.slice(0, keys.length - ICON_CACHE_MAX)) {
+      delete cache[stale];
+    }
+  }
   try {
     localStorage.setItem(ICON_CACHE_KEY, JSON.stringify(cache));
   } catch {}
@@ -36,6 +44,7 @@ export function ProcessList({ processes, onChange }: Props) {
   const [processIcons, setProcessIcons] = useState<
     Record<string, string | null>
   >(() => loadIconCache());
+  const [removingProcesses, setRemovingProcesses] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerList, setPickerList] = useState<string[]>([]);
   const [pickerSearch, setPickerSearch] = useState("");
@@ -103,6 +112,10 @@ export function ProcessList({ processes, onChange }: Props) {
   }, [pickerOpen]);
 
   function openPicker() {
+    if (pickerOpen) {
+      setPickerOpen(false);
+      return;
+    }
     setPickerOpen(true);
     setPickerSearch("");
     setPickerLoading(true);
@@ -129,7 +142,15 @@ export function ProcessList({ processes, onChange }: Props) {
   }
 
   function remove(name: string) {
-    onChange(processes.filter((p) => p !== name));
+    setRemovingProcesses((prev) => new Set(prev).add(name));
+    setTimeout(() => {
+      onChange(processes.filter((p) => p !== name));
+      setRemovingProcesses((prev) => {
+        const next = new Set(prev);
+        next.delete(name);
+        return next;
+      });
+    }, 220);
   }
 
   function handleKey(e: KeyboardEvent<HTMLInputElement>) {
@@ -159,7 +180,7 @@ export function ProcessList({ processes, onChange }: Props) {
   return (
     <div className="space-y-4">
       {/* Add process card */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5">
+      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1 relative z-10">
         <div className="flex items-start justify-between mb-3">
           <div>
             <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -176,7 +197,7 @@ export function ProcessList({ processes, onChange }: Props) {
           <div className="relative shrink-0" ref={pickerRef}>
             <button
               onClick={openPicker}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-[#2a2a2a] hover:bg-slate-50 dark:hover:bg-[#333] transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-[#2a2a2a] hover:bg-slate-50 dark:hover:bg-[#333] transition-colors btn-press"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path
@@ -190,7 +211,7 @@ export function ProcessList({ processes, onChange }: Props) {
               Aus laufenden Prozessen wählen
             </button>
             {pickerOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-72 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-lg z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-1.5 w-72 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-lg z-50 overflow-hidden dropdown-anim">
                 <div className="p-2 border-b border-black/6 dark:border-white/6">
                   <input
                     autoFocus
@@ -279,7 +300,8 @@ export function ProcessList({ processes, onChange }: Props) {
             onClick={add}
             disabled={!input.trim()}
             className="flex items-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-600
-                       disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm shadow-red-500/20"
+                       disabled:opacity-40 text-white text-sm font-semibold rounded-xl shadow-sm shadow-red-500/20 btn-press"
+            style={{ transition: "background-color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)" }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path
@@ -295,7 +317,7 @@ export function ProcessList({ processes, onChange }: Props) {
       </div>
 
       {/* Process list */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5">
+      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
             Überwachte Prozesse ({processes.length})
@@ -319,18 +341,22 @@ export function ProcessList({ processes, onChange }: Props) {
           </p>
         ) : (
           <div className="space-y-2">
-            {processes.map((name) => {
+            {processes.map((name, idx) => {
               const isRunning = runningProcesses.some(
                 (r) => r.toLowerCase() === name.toLowerCase(),
               );
               return (
                 <div
                   key={name}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-3 transition-colors border ${
+                  className={`flex items-center gap-3 rounded-xl px-3 py-3 border process-row ${
                     isRunning
                       ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800/50"
                       : "bg-white dark:bg-[#2a2a2a] border-black/6 dark:border-white/6 hover:border-black/12 dark:hover:border-white/12"
-                  }`}
+                  } ${removingProcesses.has(name) ? "process-row-removing" : ""}`}
+                  style={{
+                    animationDelay: `${Math.min(idx, 7) * 35}ms`,
+                    transition: "background-color 200ms cubic-bezier(0.23,1,0.32,1), border-color 200ms cubic-bezier(0.23,1,0.32,1)",
+                  }}
                 >
                   {/* Icon / play button */}
                   <div
@@ -369,7 +395,7 @@ export function ProcessList({ processes, onChange }: Props) {
                     </div>
                     {isRunning ? (
                       <div className="text-xs text-slate-500 dark:text-slate-400">
-                        Läuft seit 14 Min · trigger aktiv
+                        Läuft · trigger aktiv
                       </div>
                     ) : (
                       <div className="text-xs text-slate-400 dark:text-slate-500">
@@ -387,7 +413,8 @@ export function ProcessList({ processes, onChange }: Props) {
                   <button
                     onClick={() => remove(name)}
                     className="w-6 h-6 flex items-center justify-center text-slate-300 dark:text-slate-600
-                               hover:text-slate-500 dark:hover:text-slate-400 shrink-0 transition-colors rounded"
+                               hover:text-slate-500 dark:hover:text-slate-400 shrink-0 rounded btn-press"
+                    style={{ transition: "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)" }}
                     title="Entfernen"
                   >
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">

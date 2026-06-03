@@ -46,14 +46,137 @@ body {
   background: #1a1a1a;
 }
 
+/* ── Custom easing curves ─────────────────────────────── */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Monitor card pop (existing, improved) ────────────── */
 @keyframes monitor-pop {
-  from { transform: scale(0); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
 }
 
 .monitor-card {
-  animation: monitor-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: monitor-pop 0.22s var(--ease-spring) both;
   transform-origin: center center;
+}
+
+/* ── Fade-slide in (used for cards, log entries) ──────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.anim-fade-up {
+  animation: fade-up 0.28s var(--ease-out) both;
+}
+
+/* ── Stagger delays for list items ────────────────────── */
+.stagger-1  { animation-delay: 0ms;  }
+.stagger-2  { animation-delay: 40ms; }
+.stagger-3  { animation-delay: 80ms; }
+.stagger-4  { animation-delay: 120ms;}
+.stagger-5  { animation-delay: 160ms;}
+
+/* ── Log entry entrance ───────────────────────────────── */
+@keyframes log-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0);    }
+}
+
+.log-entry {
+  animation: log-in 0.22s var(--ease-out) both;
+}
+
+/* ── Hz number pulse on change ────────────────────────── */
+@keyframes hz-pop {
+  0%   { transform: scale(1);    }
+  40%  { transform: scale(1.08); }
+  100% { transform: scale(1);    }
+}
+
+.hz-pop {
+  animation: hz-pop 0.3s var(--ease-spring);
+}
+
+/* ── Mode badge fade ──────────────────────────────────── */
+@keyframes badge-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1);    }
+}
+
+.badge-anim {
+  animation: badge-in 0.2s var(--ease-spring) both;
+}
+
+/* ── Pulsing dot for GAME mode ────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.5; transform: scale(0.75); }
+}
+
+.dot-pulse {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+/* ── Button press feedback ────────────────────────────── */
+.btn-press {
+  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out);
+}
+
+.btn-press:active {
+  transform: scale(0.96);
+  opacity: 0.85;
+}
+
+/* ── Process row entrance ─────────────────────────────── */
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.process-row {
+  animation: row-in 0.22s var(--ease-out) both;
+}
+
+/* ── Process row removal ──────────────────────────────── */
+@keyframes row-out {
+  0%   { opacity: 1; transform: translateX(0)    scale(1);    }
+  100% { opacity: 0; transform: translateX(24px) scale(0.97); }
+}
+
+.process-row-removing {
+  animation: row-out 0.22s var(--ease-out) both;
+  pointer-events: none;
+}
+
+/* ── Tab content fade ─────────────────────────────────── */
+@keyframes tab-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.tab-content {
+  animation: tab-fade 0.2s var(--ease-out) both;
+}
+
+/* ── Picker dropdown entrance ─────────────────────────── */
+@keyframes dropdown-in {
+  from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+}
+
+.dropdown-anim {
+  animation: dropdown-in 0.18s var(--ease-out) both;
+  transform-origin: top right;
+}
+
+/* ── Sparkline color transition ───────────────────────── */
+.sparkline-path {
+  transition: stroke 0.4s var(--ease-out);
 }
 
 select {

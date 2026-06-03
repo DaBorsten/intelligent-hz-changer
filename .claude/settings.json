@@ -3,7 +3,11 @@
     "allow": [
       "Bash(cargo build *)",
       "Bash(cargo check *)",
-      "Read(//c/Users/DaBorsten/Projekte/TogMic/src-tauri/src/**)"
+      "Read(//c/Users/DaBorsten/Projekte/TogMic/src-tauri/src/**)",
+      "Bash(Select-String -NotMatch \"node_modules|target|dist|package-lock|Cargo.lock\")",
+      "Bash(Select-Object -First 200)",
+      "PowerShell(git ls-files | Where-Object { $_ -notmatch \"node_modules|target|dist|package-lock|Cargo.lock|\\\\.png$|\\\\.ico$|\\\\.svg$\" })",
+      "PowerShell(Get-ChildItem -Recurse src-tauri/src,src,scripts -File | Select-Object FullName, @{N='Lines';E={\\(Get-Content $_.FullName | Measure-Object -Line\\).Lines}} | Format-Table -AutoSize)"
     ]
   }
 }

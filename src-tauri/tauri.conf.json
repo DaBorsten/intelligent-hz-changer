@@ -15,13 +15,16 @@
         "title": "Intelligent Hz Changer",
         "width": 1080,
         "height": 720,
+        "minWidth": 900,
+        "minHeight": 600,
         "visible": false,
         "skipTaskbar": false,
         "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     }
   },
   "plugins": {

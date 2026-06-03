@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub theme: String,
@@ -7,6 +11,11 @@ pub struct AppSettings {
     pub start_minimized: bool,
     pub close_to_tray: bool,
     pub check_updates: bool,
+    /// Whether the Hz watcher is active. Persisted across restarts.
+    /// Managed by `set_enabled`/`get_enabled`, not by the settings UI, so it
+    /// defaults to `true` when absent and is preserved on settings saves.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -17,6 +26,7 @@ impl Default for AppSettings {
             start_minimized: false,
             close_to_tray: true,
             check_updates: true,
+            enabled: true,
         }
     }
 }

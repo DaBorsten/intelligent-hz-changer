@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { HzChangedPayload, LogEntry, HzPoint } from "../types";
@@ -23,6 +23,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const [todaySwitches, setTodaySwitches] = useState(0);
   const [gameMinutes, setGameMinutes] = useState(0);
   const [standardMinutes, setStandardMinutes] = useState(0);
+  const hzRef = useRef<HTMLSpanElement>(null);
 
   function addLog(payload: HzChangedPayload) {
     const timestamp = new Date().toLocaleTimeString("de-DE", {
@@ -128,6 +129,14 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
     runningProcesses.some((r) => r.toLowerCase() === name.toLowerCase())
   );
 
+  useEffect(() => {
+    const el = hzRef.current;
+    if (!el || currentHz == null) return;
+    el.classList.remove("hz-pop");
+    void el.offsetWidth;
+    el.classList.add("hz-pop");
+  }, [currentHz]);
+
   function formatDuration(minutes: number) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
@@ -139,21 +148,25 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         {/* Current Hz card */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5">
+        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1">
           <div className="flex items-start justify-between mb-2">
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Aktuelle Bildwiederholrate</span>
             <span
-              className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+              key={mode}
+              className={`text-xs font-bold px-2.5 py-0.5 rounded-full badge-anim ${
                 mode === "GAME"
                   ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400"
                   : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
               }`}
             >
-              • {mode === "GAME" ? "GAME" : "STANDARD"}
+              {mode === "GAME" ? "● GAME" : "● STANDARD"}
             </span>
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-6xl font-black text-slate-900 dark:text-slate-100 leading-none tabular-nums">
+            <span
+              ref={hzRef}
+              className="text-6xl font-black text-slate-900 dark:text-slate-100 leading-none tabular-nums"
+            >
               {currentHz ?? "—"}
             </span>
             {currentHz != null && (
@@ -173,7 +186,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         </div>
 
         {/* Active Processes card */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5">
+        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Aktive Prozesse</span>
             <span className="text-xs text-slate-400 dark:text-slate-500">
@@ -234,7 +247,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       </div>
 
       {/* Today stats */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] px-5 py-4 flex items-center gap-8">
+      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] px-5 py-4 flex items-center gap-8 anim-fade-up stagger-3">
         <div>
           <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{todaySwitches}</div>
           <div className="text-xs text-slate-400 dark:text-slate-500">× gewechselt<br/>automatisch</div>
@@ -251,7 +264,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       </div>
 
       {/* Event log */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5">
+      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-4">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">Ereignisprotokoll</span>
           <div className="flex gap-1">
@@ -280,15 +293,19 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
           {filteredLog.length === 0 ? (
             <p className="text-sm text-slate-400 dark:text-slate-500 italic">Noch keine Ereignisse.</p>
           ) : (
-            filteredLog.map((entry) => (
-              <div key={entry.id} className="flex items-center gap-3 text-sm">
+            filteredLog.map((entry, i) => (
+              <div
+                key={entry.id}
+                className="flex items-center gap-3 text-sm log-entry"
+                style={{ animationDelay: `${Math.min(i, 4) * 30}ms` }}
+              >
                 <span className="text-slate-400 dark:text-slate-500 text-xs font-mono w-10 shrink-0 tabular-nums">
                   {entry.timestamp}
                 </span>
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
                     entry.event_type === "process_start"
-                      ? "bg-red-500"
+                      ? "bg-red-500 dot-pulse"
                       : "bg-slate-400 dark:bg-slate-500"
                   }`}
                 />

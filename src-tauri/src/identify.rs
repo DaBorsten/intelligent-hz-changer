@@ -70,7 +70,7 @@ mod inner {
         let _ = RegisterClassExW(&wc);
 
         WINDOW_COUNT.store(0, Ordering::SeqCst);
-        *LABELS.lock().unwrap() = labels;
+        *LABELS.lock().unwrap_or_else(|e| e.into_inner()) = labels;
 
         for (i, mon) in monitors.iter().enumerate() {
             let scale = scale_for_monitor(mon.x, mon.y);
@@ -135,7 +135,7 @@ mod inner {
                 let packed = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
                 let idx = (packed & 0xFFFF) as usize;
                 let is_light = (packed >> 16) != 0;
-                let label = LABELS.lock().unwrap().get(idx).cloned().unwrap_or_else(|| (idx + 1).to_string());
+                let label = LABELS.lock().unwrap_or_else(|e| e.into_inner()).get(idx).cloned().unwrap_or_else(|| (idx + 1).to_string());
                 let mut ps = PAINTSTRUCT::default();
                 let hdc = BeginPaint(hwnd, &mut ps);
 
