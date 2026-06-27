@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { MonitorInfoExtended, WatchConfig } from "../types";
-import { useTheme } from "../ThemeContext";
+import type { MonitorHz, MonitorInfoExtended, WatchConfig } from "../types";
+import { useTheme } from "../useTheme";
 
 interface SelectOption { value: string; label: string }
 
@@ -41,7 +41,7 @@ function CustomSelect({ value, options, onChange }: {
         {/* ghost sizer: invisible widest label reserves width, selected overlays on top */}
         <span className="relative">
           <span className="invisible whitespace-nowrap" aria-hidden="true">
-            {options.reduce((a, b) => b.label.length > a.label.length ? b : a, options[0])?.label}
+            {options.reduce((a, b) => b.label.length > a.label.length ? b : a, options[0]).label}
           </span>
           <span className="absolute inset-0 flex items-center whitespace-nowrap">
             {selected?.label ?? value}
@@ -136,32 +136,45 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const [savedGameHz, setSavedGameHz] = useState(config.game_hz);
   const [savedDefaultHz, setSavedDefaultHz] = useState(config.default_hz);
   const isDirty = draftGameHz !== savedGameHz || draftDefaultHz !== savedDefaultHz;
+  const draftGameHzRef = useRef(draftGameHz);
+  const draftDefaultHzRef = useRef(draftDefaultHz);
+  const isDirtyRef = useRef(isDirty);
+
+  useEffect(() => {
+    draftGameHzRef.current = draftGameHz;
+    draftDefaultHzRef.current = draftDefaultHz;
+    isDirtyRef.current = isDirty;
+  }, [draftDefaultHz, draftGameHz, isDirty]);
 
   useEffect(() => {
     invoke<MonitorInfoExtended[]>("get_monitors_extended")
       .then((mons) => {
         setMonitors(mons);
-        if (!config.monitor_name) {
+        if (!config.monitor_name && mons.length > 0) {
           const initial = mons.find((m) => m.is_primary) ?? mons[0];
-          if (initial) onChange({ monitor_name: initial.device_name });
+          onChange({ monitor_name: initial.device_name });
         }
       })
       .catch(console.error);
-  }, []);
+  }, [config.monitor_name, onChange]);
 
   const prevMonitorRef = useRef<string>("");
 
   useEffect(() => {
     if (!config.monitor_name) return;
+    let cancelled = false;
     const monitorChanged = prevMonitorRef.current !== config.monitor_name;
     prevMonitorRef.current = config.monitor_name;
-    setLoading(true);
-    invoke<number[]>("get_supported_hz", { monitorName: config.monitor_name })
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
+    void invoke<number[]>("get_supported_hz", { monitorName: config.monitor_name })
       .then((hz) => {
+        if (cancelled) return;
         setSupportedHz(hz);
         if (hz.length === 0) return;
-        if (monitorChanged || !isDirty) {
-          const saved = config.monitor_settings?.[config.monitor_name];
+        if (monitorChanged || !isDirtyRef.current) {
+          const saved = config.monitor_settings[config.monitor_name] as MonitorHz | undefined;
           const newGameHz = saved?.game_hz && hz.includes(saved.game_hz) ? saved.game_hz : hz[hz.length - 1];
           const newDefaultHz = saved?.default_hz && hz.includes(saved.default_hz) ? saved.default_hz : (hz.includes(60) ? 60 : hz[0]);
           setDraftGameHz(newGameHz);
@@ -169,11 +182,16 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
           setSavedGameHz(newGameHz);
           setSavedDefaultHz(newDefaultHz);
         } else {
-          if (!hz.includes(draftGameHz)) setDraftGameHz(hz[hz.length - 1]);
-          if (!hz.includes(draftDefaultHz)) setDraftDefaultHz(hz.includes(60) ? 60 : hz[0]);
+          if (!hz.includes(draftGameHzRef.current)) setDraftGameHz(hz[hz.length - 1]);
+          if (!hz.includes(draftDefaultHzRef.current)) setDraftDefaultHz(hz.includes(60) ? 60 : hz[0]);
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [config.monitor_name, config.monitor_settings]);
 
   useEffect(() => {
@@ -212,8 +230,8 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     }
   }
 
-  async function handleSave() {
-    const settings = { ...(config.monitor_settings ?? {}) };
+  function handleSave() {
+    const settings = { ...config.monitor_settings };
     settings[config.monitor_name] = { game_hz: draftGameHz, default_hz: draftDefaultHz };
     const override = { game_hz: draftGameHz, default_hz: draftDefaultHz, monitor_settings: settings };
     onChange(override);
@@ -311,7 +329,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
 
         <div className="flex items-center gap-3 mt-3">
           <button
-            onClick={() => invoke("identify_monitors", { theme: isDark ? "dark" : "light" }).catch(console.error)}
+            onClick={() => void invoke("identify_monitors", { theme: isDark ? "dark" : "light" }).catch(console.error)}
             className="px-3 py-1.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-lg text-xs font-medium
                        text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#333] transition-colors shadow-sm"
           >
@@ -330,7 +348,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center text-white font-bold shrink-0 shadow-sm shadow-red-500/30"
                 style={{ fontSize: layout.find((l) => l.groupDeviceNames.includes(config.monitor_name))?.isCloneGroup ? 10 : 14 }}>
-                {layout.find((l) => l.groupDeviceNames.includes(config.monitor_name))?.displayNum || extractDisplayNum(configuredMonitor.device_name) || "?"}
+                {layout.find((l) => l.groupDeviceNames.includes(config.monitor_name))?.displayNum ?? extractDisplayNum(configuredMonitor.device_name)}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
@@ -422,7 +440,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         <div className="flex items-center gap-2 bg-white dark:bg-[#1c1c1c] border border-black/8 dark:border-white/8 rounded-2xl shadow-lg px-2 py-2">
           {saveMsg && <span className="text-xs text-slate-500 dark:text-slate-400 font-medium px-1">{saveMsg}</span>}
           <button
-            onClick={handleTestHz}
+            onClick={() => void handleTestHz()}
             disabled={testing || !config.monitor_name || !isDirty}
             className="px-4 py-2 bg-[#f0eeeb] dark:bg-[#2a2a2a] border border-black/8 dark:border-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium
                        rounded-xl hover:bg-slate-200 dark:hover:bg-[#333] disabled:opacity-40 transition-colors"

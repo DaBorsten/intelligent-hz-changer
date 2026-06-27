@@ -8,10 +8,12 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "lint": "eslint src/",
     "bump": "bun scripts/bump.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
@@ -21,6 +23,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.9.1",
@@ -28,9 +31,16 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "autoprefixer": "^10.5.0",
+    "eslint": "^10.5.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.6.0",
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.0",
-    "typescript": "~5.8.3",
+    "typescript": "^5",
+    "typescript-6": "npm:@typescript/typescript6@^6.0.1",
+    "typescript-7": "npm:typescript@rc",
+    "typescript-eslint": "^8.61.1",
     "vite": "^7.3.3"
   }
 }

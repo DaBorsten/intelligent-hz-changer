@@ -163,14 +163,14 @@ export default function App() {
     });
 
     return () => {
-      unlistenHz.then((fn) => fn());
-      unlistenEnabled.then((fn) => fn());
+      void unlistenHz.then((fn) => fn());
+      void unlistenEnabled.then((fn) => fn());
     };
   }, []);
 
   function patchConfig(partial: Partial<WatchConfig>, autoSave?: boolean) {
     setConfig((prev) => ({ ...prev, ...partial }));
-    if (autoSave) save(partial);
+    if (autoSave) void save(partial);
   }
 
   async function save(overrideConfig?: Partial<WatchConfig>) {
@@ -284,7 +284,7 @@ export default function App() {
               <ProcessList
                 processes={config.watched_processes}
                 onChange={(p) => patchConfig({ watched_processes: p }, true)}
-                onSave={save}
+                onSave={() => void save()}
                 saving={saving}
               />
             )}
@@ -292,7 +292,7 @@ export default function App() {
               <MonitorConfig
                 config={config}
                 onChange={patchConfig}
-                onSave={save}
+                onSave={() => void save()}
                 saving={saving}
               />
             )}

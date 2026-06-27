@@ -12,7 +12,7 @@ use tauri::{Emitter, Manager, Theme, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
 use display::MonitorInfoExtended;
-use process_watcher::{WatchConfig, WatchState};
+use process_watcher::{WatchConfig, WatchState, WatchedProcess};
 
 struct AppState {
     watch_state: Arc<WatchState>,
@@ -119,7 +119,7 @@ fn load_config(app: tauri::AppHandle) -> Result<WatchConfig, String> {
 
 #[tauri::command]
 fn save_config(
-    watched_processes: Vec<String>,
+    watched_processes: Vec<WatchedProcess>,
     monitor_name: String,
     game_hz: u32,
     default_hz: u32,
@@ -310,12 +310,16 @@ fn save_settings(
 
 
 #[tauri::command]
-async fn get_process_icon(process_name: String) -> Option<String> {
+async fn get_process_icon(process_name: String, exe_path: Option<String>) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         {
-            let exe_path = find_exe_path(&process_name)?;
-            process_icon::extract_icon_base64(&exe_path)
+            // Use the provided path directly (elevated processes like Fortnite/Vanguard
+            // return null ExecutablePath from WMI, so find_exe_path fails for them).
+            let path = exe_path
+                .filter(|p| !p.is_empty())
+                .or_else(|| find_exe_path(&process_name))?;
+            process_icon::extract_icon_base64(&path)
         }
         #[cfg(not(windows))]
         {
@@ -375,6 +379,34 @@ async fn get_all_running_processes() -> Vec<String> {
     .unwrap_or_default()
 }
 
+#[derive(serde::Serialize)]
+struct RunningProcess {
+    name: String,
+    path: Option<String>,
+}
+
+#[tauri::command]
+async fn get_running_processes_with_paths() -> Vec<RunningProcess> {
+    tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            let mut seen = std::collections::HashSet::new();
+            let mut procs: Vec<RunningProcess> = query_processes()
+                .into_iter()
+                .filter(|(n, _)| !n.is_empty())
+                .filter(|(n, _)| seen.insert(n.to_lowercase()))
+                .map(|(name, path)| RunningProcess { name, path })
+                .collect();
+            procs.sort_unstable_by_key(|p| p.name.to_lowercase());
+            procs
+        }
+        #[cfg(not(windows))]
+        vec![]
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Resolves a process name to its executable path via WMI.
 /// `ExecutablePath` is populated regardless of privilege level (unlike
 /// `Get-Process .Path`, which is null for elevated processes like Vanguard).
@@ -387,6 +419,11 @@ fn find_exe_path(process_name: &str) -> Option<String> {
                 && path.as_deref().is_some_and(|p| !p.is_empty())
         })
         .and_then(|(_, path)| path)
+}
+
+#[tauri::command]
+fn check_exe_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
 }
 
 #[tauri::command]
@@ -562,6 +599,7 @@ pub fn run() {
             save_config,
             get_running_watched,
             get_all_running_processes,
+            get_running_processes_with_paths,
             get_process_icon,
             set_window_theme,
             set_enabled,
@@ -569,6 +607,7 @@ pub fn run() {
             load_settings,
             save_settings,
             show_update_notification,
+            check_exe_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

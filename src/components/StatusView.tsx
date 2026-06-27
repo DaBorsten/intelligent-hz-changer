@@ -1,15 +1,47 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { HzChangedPayload, LogEntry, HzPoint } from "../types";
+import type {
+  HzChangedPayload,
+  LogEntry,
+  HzPoint,
+  MonitorInfoExtended,
+  WatchedProcess,
+} from "../types";
+import { wpName, wpKey } from "../types";
 
 interface Props {
   monitorName: string;
-  watchedProcesses: string[];
+  watchedProcesses: WatchedProcess[];
   gameHz?: number;
 }
 
 let logIdCounter = 0;
+const ICON_CACHE_KEY = "hz-process-icons";
+
+function loadIconCache(): Record<string, string | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(ICON_CACHE_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveIconToCache(name: string, icon: string) {
+  const cache = loadIconCache();
+  cache[name] = icon;
+  try {
+    localStorage.setItem(ICON_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Cache writes are best-effort; private mode or quota limits can fail here.
+  }
+}
 
 export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const [currentHz, setCurrentHz] = useState<number | null>(null);
@@ -19,10 +51,11 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | "hz" | "process">("all");
   const [hzHistory, setHzHistory] = useState<HzPoint[]>([]);
-  const [historySeeded, setHistorySeeded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [todaySwitches, setTodaySwitches] = useState(0);
-  const [gameMinutes, setGameMinutes] = useState(0);
-  const [standardMinutes, setStandardMinutes] = useState(0);
+  const [processIcons, setProcessIcons] = useState<Record<string, string | null | undefined>>(
+    () => loadIconCache()
+  );
   const hzRef = useRef<HTMLSpanElement>(null);
 
   function addLog(payload: HzChangedPayload) {
@@ -49,61 +82,78 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
     }
   }
 
-  function refreshStatus() {
+  const refreshStatus = useCallback(() => {
     if (monitorName) {
       invoke<number>("get_current_hz", { monitorName })
-        .then(setCurrentHz)
-        .catch(() => {});
+        .then((hz) => {
+          const timestamp = Date.now();
+          setNow(timestamp);
+          setCurrentHz(hz);
+          setHzHistory((prev) =>
+            prev.length === 0 ? [{ time: timestamp, hz }] : prev
+          );
+        })
+        .catch(() => undefined);
     }
     invoke<string[]>("get_running_watched")
       .then(setRunningProcesses)
-      .catch(() => {});
-  }
+      .catch(() => undefined);
+  }, [monitorName]);
 
   useEffect(() => {
     refreshStatus();
 
     const unlisten = listen<HzChangedPayload>("hz-changed", (event) => {
       const hz = event.payload.current_hz;
+      const timestamp = Date.now();
+      setNow(timestamp);
       setCurrentHz(hz);
       const isGame = event.payload.event_type === "process_start";
       setMode(isGame ? "GAME" : "STANDARD");
       setHzHistory((prev) => {
-        const now = Date.now();
-        const filtered = prev.filter((p) => p.time >= now - 3_600_000);
-        return [...filtered, { time: now, hz }];
+        const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
+        return [...filtered, { time: timestamp, hz }];
       });
       addLog(event.payload);
-      invoke<string[]>("get_running_watched").then(setRunningProcesses).catch(() => {});
+      invoke<string[]>("get_running_watched").then(setRunningProcesses).catch(() => undefined);
     });
 
     const interval = setInterval(refreshStatus, 5000);
 
     return () => {
-      unlisten.then((fn) => fn());
+      void unlisten.then((fn) => fn());
       clearInterval(interval);
     };
-  }, [monitorName]);
-
-  useEffect(() => {
-    if (currentHz != null && !historySeeded) {
-      setHzHistory([{ time: Date.now(), hz: currentHz }]);
-      setHistorySeeded(true);
-    }
-  }, [currentHz, historySeeded]);
+  }, [monitorName, refreshStatus]);
 
   useEffect(() => {
     if (!monitorName) return;
-    invoke<any[]>("get_monitors_extended")
+    invoke<MonitorInfoExtended[]>("get_monitors_extended")
       .then((mons) => {
-        const mon = mons.find((m: any) => m.device_name === monitorName);
-        setMonitorLabel(mon?.friendly_name || monitorName);
+        const mon = mons.find((m) => m.device_name === monitorName);
+        setMonitorLabel(mon?.friendly_name ?? monitorName);
       })
       .catch(() => setMonitorLabel(monitorName));
   }, [monitorName]);
 
-  // Compute game/standard minutes from history
   useEffect(() => {
+    const cache = loadIconCache();
+    for (const wp of watchedProcesses) {
+      const name = wpName(wp);
+      const iconKey = name.toLowerCase();
+      if (processIcons[iconKey] || cache[iconKey]) continue;
+      invoke<string | null>("get_process_icon", { processName: name, exePath: typeof wp === "object" ? wp.path : undefined })
+        .then((icon) => {
+          if (icon) {
+            saveIconToCache(iconKey, icon);
+            setProcessIcons((prev) => ({ ...prev, [iconKey]: icon }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [watchedProcesses, processIcons]);
+
+  const { gameMinutes, standardMinutes } = useMemo(() => {
     const threshold = gameHz ?? 100;
     const gameMs = hzHistory.reduce((acc, pt, i) => {
       if (i === 0) return acc;
@@ -114,20 +164,17 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
     const totalMs = hzHistory.length > 1
       ? hzHistory[hzHistory.length - 1].time - hzHistory[0].time
       : 0;
-    setGameMinutes(Math.round(gameMs / 60000));
-    setStandardMinutes(Math.round((totalMs - gameMs) / 60000));
-  }, [hzHistory]);
+    return {
+      gameMinutes: Math.round(gameMs / 60000),
+      standardMinutes: Math.round((totalMs - gameMs) / 60000),
+    };
+  }, [gameHz, hzHistory]);
 
   const filteredLog = log.filter((e) => {
     if (logFilter === "all") return true;
     if (logFilter === "hz") return e.hz_from != null && e.hz_to != null;
-    if (logFilter === "process") return e.process_name != null;
-    return true;
+    return e.process_name != null;
   });
-
-  const activeProcess = watchedProcesses.find((name) =>
-    runningProcesses.some((r) => r.toLowerCase() === name.toLowerCase())
-  );
 
   useEffect(() => {
     const el = hzRef.current;
@@ -178,7 +225,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
               {monitorLabel}
             </p>
           )}
-          <Sparkline points={hzHistory} mode={mode} />
+          <Sparkline points={hzHistory} mode={mode} now={now} />
           <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
             <span>Letzte Stunde</span>
             <span>{gameMinutes} Min Game · {standardMinutes} Min Standard</span>
@@ -197,20 +244,30 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
             <p className="text-xs text-slate-400 dark:text-slate-500 italic">Keine Prozesse konfiguriert.</p>
           ) : (
             <div className="space-y-2">
-              {watchedProcesses.slice(0, 5).map((name) => {
-                const isRunning = runningProcesses.some(
-                  (r) => r.toLowerCase() === name.toLowerCase()
-                );
+              {watchedProcesses.slice(0, 5).map((wp) => {
+                const key = wpKey(wp);
+                const name = wpName(wp);
+                const iconKey = name.toLowerCase();
+                const icon = processIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
+                const isRunning = runningProcesses.some((r) => r === key);
                 return (
-                  <div key={name} className="flex items-center gap-2.5">
+                  <div key={key} className="flex items-center gap-2.5">
                     <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                        isRunning ? "bg-red-500 shadow-sm shadow-red-500/30" : "bg-slate-200 dark:bg-slate-700"
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
+                        icon
+                          ? "bg-transparent"
+                          : isRunning
+                            ? "bg-red-500 shadow-sm shadow-red-500/30"
+                            : "bg-slate-200 dark:bg-slate-700"
                       }`}
                     >
-                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                        <path d="M2.5 1.5l4 2.5-4 2.5V1.5z" fill={isRunning ? "white" : "#94a3b8"} />
-                      </svg>
+                      {icon ? (
+                        <img src={icon} alt="" className="w-7 h-7 object-contain" />
+                      ) : (
+                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                          <path d="M2.5 1.5l4 2.5-4 2.5V1.5z" fill={isRunning ? "white" : "#94a3b8"} />
+                        </svg>
+                      )}
                     </div>
                     <span
                       className={`text-sm font-mono flex-1 truncate ${
@@ -237,11 +294,6 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                 </p>
               )}
             </div>
-          )}
-          {activeProcess && (
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-3 pt-3 border-t border-black/6 dark:border-white/6">
-              ⓘ Sobald {activeProcess.split(".")[0]} startet, wechselt der Monitor auf {gameHz ?? "—"} Hz.
-            </p>
           )}
         </div>
       </div>
@@ -335,12 +387,11 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   );
 }
 
-function Sparkline({ points, mode }: { points: HzPoint[]; mode: string }) {
+function Sparkline({ points, mode, now }: { points: HzPoint[]; mode: string; now: number }) {
   if (points.length < 2) return <div style={{ height: 64 }} className="mt-3" />;
 
   const W = 400;
   const H = 52;
-  const now = Date.now();
   const oneHourAgo = now - 3_600_000;
 
   const inWindow = points.filter((p) => p.time >= oneHourAgo);

@@ -1,19 +1,6 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-export type Theme = "light" | "dark" | "system";
-
-interface ThemeContextValue {
-  theme: Theme;
-  setTheme: (t: Theme) => void;
-  isDark: boolean;
-}
-
-const ThemeContext = createContext<ThemeContextValue>({
-  theme: "system",
-  setTheme: () => {},
-  isDark: false,
-});
+import { ThemeContext, type Theme } from "./theme";
 
 function applyTauriTheme(theme: Theme) {
   invoke("set_window_theme", { theme }).catch(() => {});
@@ -21,7 +8,7 @@ function applyTauriTheme(theme: Theme) {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = (localStorage.getItem("hz-theme") as Theme) ?? "system";
+    const saved = (localStorage.getItem("hz-theme") ?? "system") as Theme;
     // Apply immediately — before first paint
     applyTauriTheme(saved);
     return saved;
@@ -55,8 +42,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       {children}
     </ThemeContext.Provider>
   );
-}
-
-export function useTheme() {
-  return useContext(ThemeContext);
 }

@@ -26,6 +26,8 @@ struct ProcessEntry {
     name: String,
     #[serde(rename = "ProcessId")]
     process_id: u32,
+    #[serde(rename = "ExecutablePath")]
+    executable_path: Option<String>,
 }
 
 /// `__InstanceCreationEvent` carrying the newly created `Win32_Process`.
@@ -96,7 +98,10 @@ fn run_event_loop(
 
     for event in iterator {
         match event {
-            Ok(ev) => register_process(state, app, &ev.target_instance.name, ev.target_instance.process_id),
+            Ok(ev) => {
+                let exe = ev.target_instance.executable_path.as_deref().unwrap_or("");
+                register_process(state, app, &ev.target_instance.name, exe, ev.target_instance.process_id);
+            }
             Err(e) => eprintln!("WMI notification error: {e}"),
         }
     }
@@ -124,13 +129,14 @@ fn run_poll_loop(wmi_con: &wmi::WMIConnection, state: &Arc<WatchState>, app: &ta
             .unwrap_or_else(|e| e.into_inner())
             .retain(|pid| current_pids.contains(pid));
 
-        let watched: HashSet<String> = {
+        let watched: Vec<crate::process_watcher::WatchedProcess> = {
             let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-            cfg.watched_processes.iter().map(|w| w.to_lowercase()).collect()
+            cfg.watched_processes.clone()
         };
         for proc in &processes {
-            if watched.contains(&proc.name.to_lowercase()) {
-                register_process(state, app, &proc.name, proc.process_id);
+            let exe = proc.executable_path.as_deref().unwrap_or("");
+            if watched.iter().any(|w| w.matches(&proc.name, exe)) {
+                register_process(state, app, &proc.name, exe, proc.process_id);
             }
         }
 
@@ -155,13 +161,14 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
         return;
     };
 
-    let watched: HashSet<String> = {
+    let watched: Vec<crate::process_watcher::WatchedProcess> = {
         let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-        cfg.watched_processes.iter().map(|w| w.to_lowercase()).collect()
+        cfg.watched_processes.clone()
     };
     for proc in &processes {
-        if watched.contains(&proc.name.to_lowercase()) {
-            register_process(state, app, &proc.name, proc.process_id);
+        let exe = proc.executable_path.as_deref().unwrap_or("");
+        if watched.iter().any(|w| w.matches(&proc.name, exe)) {
+            register_process(state, app, &proc.name, exe, proc.process_id);
         }
     }
 }
@@ -171,8 +178,8 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
 /// `on_process_start` is idempotent per PID and the spawn is gated on the shared
 /// `watching` set, so neither counts nor threads are duplicated.
 #[cfg(windows)]
-fn register_process(state: &Arc<WatchState>, app: &tauri::AppHandle, name: &str, pid: u32) {
-    if state.on_process_start(name, pid) && state.is_enabled() {
+fn register_process(state: &Arc<WatchState>, app: &tauri::AppHandle, name: &str, exe_path: &str, pid: u32) {
+    if state.on_process_start(name, exe_path, pid) && state.is_enabled() {
         sync_hz(state, app, format!("{name} gestartet"), Some(name.to_string()), "process_start");
     }
 

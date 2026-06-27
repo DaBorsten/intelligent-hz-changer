@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { useTheme } from "../ThemeContext";
+import { useTheme } from "../useTheme";
 
 interface AppSettings {
   theme: string;
@@ -61,7 +61,7 @@ function SettingRow({
           <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{description}</div>
         )}
       </div>
-      <div className="flex-shrink-0">{children}</div>
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }
@@ -293,7 +293,7 @@ export function SettingsTab() {
   useEffect(() => {
     if (!autoCheckDone.current && version && settings.check_updates) {
       autoCheckDone.current = true;
-      checkUpdates(true);
+      void checkUpdates(true);
     }
   }, [version, settings.check_updates]);
 
@@ -369,7 +369,7 @@ export function SettingsTab() {
         <UpdateDialog
           info={updateInfo}
           onClose={() => setShowDialog(false)}
-          onUpdate={handleUpdate}
+          onUpdate={() => void handleUpdate()}
           installing={isInstalling}
           progress={downloadProgress}
         />
@@ -385,7 +385,7 @@ export function SettingsTab() {
               <ThemeSegmentedControl
                 options={themeOptions}
                 value={settings.theme}
-                onChange={(v) => patch({ theme: v })}
+                onChange={(v) => void patch({ theme: v })}
               />
             </SettingRow>
           </div>
@@ -397,12 +397,12 @@ export function SettingsTab() {
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
             <SettingRow label="Autostart" description="App beim Windows-Start automatisch starten">
-              <Toggle checked={settings.autostart} onChange={(v) => patch({ autostart: v })} />
+              <Toggle checked={settings.autostart} onChange={(v) => void patch({ autostart: v })} />
             </SettingRow>
             <SettingRow label="Minimiert starten" description="App beim Start direkt im Tray verstecken">
               <Toggle
                 checked={settings.start_minimized}
-                onChange={(v) => patch({ start_minimized: v })}
+                onChange={(v) => void patch({ start_minimized: v })}
               />
             </SettingRow>
           </div>
@@ -419,7 +419,7 @@ export function SettingsTab() {
             >
               <Toggle
                 checked={settings.close_to_tray}
-                onChange={(v) => patch({ close_to_tray: v })}
+                onChange={(v) => void patch({ close_to_tray: v })}
               />
             </SettingRow>
           </div>
@@ -436,7 +436,7 @@ export function SettingsTab() {
             >
               <Toggle
                 checked={settings.check_updates}
-                onChange={(v) => patch({ check_updates: v })}
+                onChange={(v) => void patch({ check_updates: v })}
               />
             </SettingRow>
             <SettingRow
@@ -459,7 +459,7 @@ export function SettingsTab() {
                   <span className="text-xs text-red-400 font-medium">Fehler</span>
                 )}
                 <button
-                  onClick={() => checkUpdates(false)}
+                  onClick={() => void checkUpdates(false)}
                   disabled={updateStatus === "checking"}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors"
                 >

@@ -1,3 +1,16 @@
+/** Mirrors the serde-untagged WatchedProcess enum on the Rust side. */
+export type WatchedProcess = string | { name: string; path: string };
+
+export function wpName(wp: WatchedProcess): string {
+  return typeof wp === "string" ? wp : wp.name;
+}
+
+export function wpKey(wp: WatchedProcess): string {
+  return typeof wp === "string"
+    ? wp.toLowerCase()
+    : `${wp.name.toLowerCase()}|${wp.path.toLowerCase()}`;
+}
+
 export interface MonitorInfo {
   device_name: string;
   friendly_name: string;
@@ -22,7 +35,7 @@ export interface MonitorHz {
 }
 
 export interface WatchConfig {
-  watched_processes: string[];
+  watched_processes: WatchedProcess[];
   monitor_name: string;
   game_hz: number;
   default_hz: number;
