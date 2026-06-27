@@ -3,6 +3,32 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Resolves an exe path from a PID via QueryFullProcessImageNameW.
+/// WMI returns null ExecutablePath for Vanguard/EAC-protected processes — this succeeds where WMI fails.
+#[cfg(windows)]
+pub(crate) fn exe_path_from_pid(pid: u32) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::core::PWSTR;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = CloseHandle(handle);
+        ok.ok().map(|_| String::from_utf16_lossy(&buf[..size as usize]))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MonitorHz {
     pub game_hz: u32,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -381,14 +382,15 @@ export function SettingsTab() {
 
   return (
     <>
-      {showDialog && updateInfo && (
+      {showDialog && updateInfo && createPortal(
         <UpdateDialog
           info={updateInfo}
           onClose={() => setShowDialog(false)}
           onUpdate={() => void handleUpdate()}
           installing={isInstalling}
           progress={downloadProgress}
-        />
+        />,
+        document.body
       )}
 
       <div className="space-y-6">
@@ -481,7 +483,7 @@ export function SettingsTab() {
                 {updateStatus === "available" && (
                   <button
                     onClick={() => setShowDialog(true)}
-                    className="text-xs text-red-500 font-medium hover:text-red-600 transition-colors underline underline-offset-2"
+                    className="text-xs text-red-500 dark:text-red-400/80 font-medium hover:text-red-600 dark:hover:text-red-400/90 transition-colors underline underline-offset-2"
                   >
                     {t("settings.versionAvailable", { version: updateInfo?.tag })}
                   </button>

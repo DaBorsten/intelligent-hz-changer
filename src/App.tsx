@@ -251,7 +251,7 @@ export default function App() {
               <MonitorConfig
                 config={config}
                 onChange={patchConfig}
-                onSave={() => void save()}
+                onSave={(override) => void save(override)}
                 saving={saving}
               />
             )}

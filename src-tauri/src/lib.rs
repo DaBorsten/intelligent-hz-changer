@@ -345,6 +345,7 @@ fn query_processes() -> Vec<(String, Option<String>)> {
     struct Proc {
         name: String,
         executable_path: Option<String>,
+        process_id: u32,
     }
 
     // spawn_blocking threads may be reused and already COM-initialized.
@@ -354,9 +355,19 @@ fn query_processes() -> Vec<(String, Option<String>)> {
     };
     let results: Result<Vec<Proc>, _> = con.query();
     results
-        .map(|v| v.into_iter().map(|p| (p.name, p.executable_path)).collect())
+        .map(|v| {
+            v.into_iter()
+                .map(|p| {
+                    // WMI returns null ExecutablePath for Vanguard-protected processes even as
+                    // admin. QueryFullProcessImageNameW succeeds where WMI fails.
+                    let path = p.executable_path.or_else(|| process_watcher::exe_path_from_pid(p.process_id));
+                    (p.name, path)
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
+
 
 #[tauri::command]
 async fn get_all_running_processes() -> Vec<String> {

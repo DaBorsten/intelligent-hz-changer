@@ -99,8 +99,12 @@ fn run_event_loop(
     for event in iterator {
         match event {
             Ok(ev) => {
-                let exe = ev.target_instance.executable_path.as_deref().unwrap_or("");
-                register_process(state, app, &ev.target_instance.name, exe, ev.target_instance.process_id);
+                let pid = ev.target_instance.process_id;
+                let exe = ev.target_instance.executable_path
+                    .filter(|p| !p.is_empty())
+                    .or_else(|| crate::process_watcher::exe_path_from_pid(pid))
+                    .unwrap_or_default();
+                register_process(state, app, &ev.target_instance.name, &exe, pid);
             }
             Err(e) => eprintln!("WMI notification error: {e}"),
         }
@@ -134,9 +138,12 @@ fn run_poll_loop(wmi_con: &wmi::WMIConnection, state: &Arc<WatchState>, app: &ta
             cfg.watched_processes.clone()
         };
         for proc in &processes {
-            let exe = proc.executable_path.as_deref().unwrap_or("");
-            if watched.iter().any(|w| w.matches(&proc.name, exe)) {
-                register_process(state, app, &proc.name, exe, proc.process_id);
+            let exe = proc.executable_path.clone()
+                .filter(|p| !p.is_empty())
+                .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
+                .unwrap_or_default();
+            if watched.iter().any(|w| w.matches(&proc.name, &exe)) {
+                register_process(state, app, &proc.name, &exe, proc.process_id);
             }
         }
 
@@ -166,9 +173,12 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
         cfg.watched_processes.clone()
     };
     for proc in &processes {
-        let exe = proc.executable_path.as_deref().unwrap_or("");
-        if watched.iter().any(|w| w.matches(&proc.name, exe)) {
-            register_process(state, app, &proc.name, exe, proc.process_id);
+        let exe = proc.executable_path.clone()
+            .filter(|p| !p.is_empty())
+            .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
+            .unwrap_or_default();
+        if watched.iter().any(|w| w.matches(&proc.name, &exe)) {
+            register_process(state, app, &proc.name, &exe, proc.process_id);
         }
     }
 }
