@@ -4,11 +4,11 @@ import {
   useState,
   type KeyboardEvent,
   type PointerEvent,
-  type MutableRefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import type { WatchedProcess } from "../types";
 import { wpName, wpKey } from "../types";
 
@@ -62,31 +62,23 @@ function saveIconToCache(name: string, icon: string) {
 }
 
 export function ProcessList({ processes, onChange }: Props) {
+  const { t } = useTranslation();
   const pickerBackdropPointerStartedOutside = useRef(false);
   const editBackdropPointerStartedOutside = useRef(false);
   const [input, setInput] = useState("");
   const [runningKeys, setRunningKeys] = useState<string[]>([]);
-  const [processCounts, setProcessCounts] = useState<Record<string, number>>(
-    {},
-  );
+  const [processCounts, setProcessCounts] = useState<Record<string, number>>({});
   const [lastSeen, setLastSeen] = useState<Record<string, number>>({});
   const [now, setNow] = useState(() => Date.now());
-  const [processIcons, setProcessIcons] = useState<
-    Record<string, string | null>
-  >(() => loadIconCache());
-  const [removingProcesses, setRemovingProcesses] = useState<Set<string>>(
-    new Set(),
-  );
+  const [processIcons, setProcessIcons] = useState<Record<string, string | null>>(() => loadIconCache());
+  const [removingProcesses, setRemovingProcesses] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerList, setPickerList] = useState<RunningProcess[]>([]);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerIcons, setPickerIcons] = useState<Record<string, string | null | undefined>>(
-    {},
-  );
+  const [pickerIcons, setPickerIcons] = useState<Record<string, string | null | undefined>>({});
   const [addError, setAddError] = useState("");
 
-  // Edit modal state
   const [editDialog, setEditDialog] = useState<WatchedProcess | null>(null);
   const [editName, setEditName] = useState("");
   const [editPath, setEditPath] = useState("");
@@ -105,20 +97,12 @@ export function ProcessList({ processes, onChange }: Props) {
   }
 
   useEffect(() => {
-    invoke<string[]>("get_running_watched")
-      .then(updateRunningKeys)
-      .catch(() => undefined);
-    invoke<Record<string, number>>("get_process_counts")
-      .then(setProcessCounts)
-      .catch(() => undefined);
+    invoke<string[]>("get_running_watched").then(updateRunningKeys).catch(() => undefined);
+    invoke<Record<string, number>>("get_process_counts").then(setProcessCounts).catch(() => undefined);
 
     const interval = setInterval(() => {
-      invoke<string[]>("get_running_watched")
-        .then(updateRunningKeys)
-        .catch(() => undefined);
-      invoke<Record<string, number>>("get_process_counts")
-        .then(setProcessCounts)
-        .catch(() => undefined);
+      invoke<string[]>("get_running_watched").then(updateRunningKeys).catch(() => undefined);
+      invoke<Record<string, number>>("get_process_counts").then(setProcessCounts).catch(() => undefined);
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -129,9 +113,9 @@ export function ProcessList({ processes, onChange }: Props) {
       const name = wpName(wp).toLowerCase();
       if (processIcons[name] || cache[name]) continue;
       invoke<string | null>("get_process_icon", {
-          processName: wpName(wp),
-          exePath: typeof wp === "object" ? wp.path : undefined,
-        })
+        processName: wpName(wp),
+        exePath: typeof wp === "object" ? wp.path : undefined,
+      })
         .then((icon) => {
           if (icon) {
             saveIconToCache(name, icon);
@@ -149,12 +133,11 @@ export function ProcessList({ processes, onChange }: Props) {
     invoke<RunningProcess[]>("get_running_processes_with_paths")
       .then((list) => {
         setPickerList(list);
-        // fetch icons for picker items not yet cached
         const cache = loadIconCache();
         for (const rp of list) {
           const key = rp.name.toLowerCase();
           if (pickerIcons[key] || cache[key]) continue;
-          invoke<string | null>("get_process_icon", { processName: rp.name, exePath: rp.path || undefined })
+          invoke<string | null>("get_process_icon", { processName: rp.name, exePath: rp.path ?? undefined })
             .then((icon) => {
               if (icon) {
                 saveIconToCache(key, icon);
@@ -170,9 +153,7 @@ export function ProcessList({ processes, onChange }: Props) {
 
   // ponytail: always use path when available — does NOT close picker
   function pickProcess(rp: RunningProcess) {
-    const entry: WatchedProcess = rp.path
-      ? { name: rp.name, path: rp.path }
-      : rp.name;
+    const entry: WatchedProcess = rp.path ? { name: rp.name, path: rp.path } : rp.name;
     const key = wpKey(entry);
     if (!processes.some((p) => wpKey(p) === key)) {
       onChange([...processes, entry]);
@@ -181,9 +162,9 @@ export function ProcessList({ processes, onChange }: Props) {
 
   async function browseExe(onPick: (path: string, filename: string) => void) {
     const selected = await openDialog({
-      filters: [{ name: "Ausführbare Datei", extensions: ["exe"] }],
+      filters: [{ name: t("processes.browseExeFilter"), extensions: ["exe"] }],
       multiple: false,
-      title: "EXE-Datei auswählen",
+      title: t("processes.browseExeTitle"),
     });
     if (!selected || typeof selected !== "string") return;
     onPick(selected, filenameFromPath(selected));
@@ -202,11 +183,9 @@ export function ProcessList({ processes, onChange }: Props) {
       : normalized;
     const entry: WatchedProcess = isPath ? { name, path: normalized } : name;
     if (isPath) {
-      const exists = await invoke<boolean>("check_exe_exists", {
-        path: normalized,
-      });
+      const exists = await invoke<boolean>("check_exe_exists", { path: normalized });
       if (!exists) {
-        setAddError("Diese EXE-Datei wurde nicht gefunden.");
+        setAddError(t("processes.notFound"));
         return;
       }
     }
@@ -243,7 +222,6 @@ export function ProcessList({ processes, onChange }: Props) {
   function handleEditPathChange(path: string) {
     setEditPath(path);
     setEditPathError("");
-
     if (path.trim().toLowerCase().endsWith(".exe")) {
       const filename = filenameFromPath(path.trim());
       if (filename) setEditName(filename);
@@ -255,16 +233,13 @@ export function ProcessList({ processes, onChange }: Props) {
     const name = editName.trim();
     if (!name) return;
     const path = editPath.trim();
-
-    // Validate EXE if full path given
     if (path.toLowerCase().endsWith(".exe")) {
       const exists = await invoke<boolean>("check_exe_exists", { path });
       if (!exists) {
-        setEditPathError("Diese EXE-Datei wurde nicht gefunden.");
+        setEditPathError(t("processes.notFound"));
         return;
       }
     }
-
     const originalKey = wpKey(editDialog);
     const updated: WatchedProcess = path ? { name, path } : name;
     onChange(processes.map((p) => (wpKey(p) === originalKey ? updated : p)));
@@ -275,21 +250,13 @@ export function ProcessList({ processes, onChange }: Props) {
     if (e.key === "Enter") void add();
   }
 
-  function handleBackdropPointerDown(
-    e: PointerEvent<HTMLDivElement>,
-    pointerStartedOutside: MutableRefObject<boolean>,
-  ) {
-    pointerStartedOutside.current = e.target === e.currentTarget;
+  function handleBackdropPointerDown(e: PointerEvent<HTMLDivElement>, ref: { current: boolean }) {
+    ref.current = e.target === e.currentTarget;
   }
 
-  function handleBackdropPointerUp(
-    e: PointerEvent<HTMLDivElement>,
-    pointerStartedOutside: MutableRefObject<boolean>,
-    onClose: () => void,
-  ) {
-    const shouldClose =
-      pointerStartedOutside.current && e.target === e.currentTarget;
-    pointerStartedOutside.current = false;
+  function handleBackdropPointerUp(e: PointerEvent<HTMLDivElement>, ref: { current: boolean }, onClose: () => void) {
+    const shouldClose = ref.current && e.target === e.currentTarget;
+    ref.current = false;
     if (shouldClose) onClose();
   }
 
@@ -297,20 +264,23 @@ export function ProcessList({ processes, onChange }: Props) {
     const key = wpKey(wp);
     const count = processCounts[key] ?? 0;
     const ts = lastSeen[key];
-    if (!ts) return count > 0 ? `${count} mal ausgeführt` : "";
+    const countStr = count > 0 ? t("processes.timesRun_one", { count }) : "";
+
+    if (!ts) return countStr;
+
     const diffMs = now - ts;
     const diffMin = Math.floor(diffMs / 60000);
     const diffH = Math.floor(diffMin / 60);
     const diffD = Math.floor(diffH / 24);
     const ago =
-      diffD >= 1
-        ? `vor ${diffD} Tag`
-        : diffH >= 1
-          ? `vor ${diffH}h`
-          : diffMin >= 1
-            ? `vor ${diffMin} Min`
-            : "gerade eben";
-    return count > 0 ? `${count} mal ausgeführt · ${ago}` : ago;
+      diffD >= 1 ? t("processes.agoDays", { n: diffD })
+      : diffH >= 1 ? t("processes.agoHours", { n: diffH })
+      : diffMin >= 1 ? t("processes.agoMinutes", { n: diffMin })
+      : t("processes.agoJustNow");
+
+    return count > 0
+      ? t("processes.lastSeenWithCount", { countStr, ago })
+      : t("processes.lastSeenAgoOnly", { ago });
   }
 
   const filteredPicker = pickerList.filter((p) =>
@@ -326,43 +296,32 @@ export function ProcessList({ processes, onChange }: Props) {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-baseline gap-2">
               <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Prozess hinzufügen
+                {t("processes.addTitle")}
               </h2>
               <span className="text-xs text-slate-400 dark:text-slate-500">
-                Name, Pfad oder .exe wählen
+                {t("processes.addHint")}
               </span>
             </div>
             <button
               onClick={openPicker}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-[#2a2a2a] hover:bg-slate-50 dark:hover:bg-[#333] transition-colors btn-press shrink-0"
             >
-              Aus laufenden Prozessen wählen
+              {t("processes.pickRunning")}
             </button>
           </div>
 
           {addError && <p className="text-xs text-red-500 mb-1">{addError}</p>}
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-              >
-                <path
-                  d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z"
-                  stroke="#94a3b8"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z" stroke="#94a3b8" strokeWidth="1.3" strokeLinejoin="round" />
               </svg>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
-                placeholder="Prozessname (z. B. game.exe)  oder  Pfad zur .exe"
+                placeholder={t("processes.inputPlaceholder")}
                 className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
                            text-sm font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none
                            focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all"
@@ -370,38 +329,25 @@ export function ProcessList({ processes, onChange }: Props) {
             </div>
             <button
               onClick={() => void browseExe((path) => setInput(path))}
-              title="EXE-Datei auswählen"
+              title={t("processes.browseExeTitle")}
               className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-[#333] text-sm transition-colors btn-press"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
+                <path d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
               </svg>
-              Durchsuchen
+              {t("processes.browse")}
             </button>
             <button
               onClick={() => void add()}
               disabled={!input.trim()}
               className="flex items-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-600
                          disabled:opacity-40 text-white text-sm font-semibold rounded-xl shadow-sm shadow-red-500/20 btn-press"
-              style={{
-                transition:
-                  "background-color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-              }}
+              style={{ transition: "background-color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)" }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M6 1v10M1 6h10"
-                  stroke="white"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
+                <path d="M6 1v10M1 6h10" stroke="white" strokeWidth="2" strokeLinecap="round" />
               </svg>
-              Hinzufügen
+              {t("processes.add")}
             </button>
           </div>
         </div>
@@ -410,12 +356,12 @@ export function ProcessList({ processes, onChange }: Props) {
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              Überwachte Prozesse ({processes.length})
+              {t("processes.watchedHeader", { count: processes.length })}
             </h2>
           </div>
           {processes.length === 0 ? (
             <p className="text-sm text-slate-400 dark:text-slate-500 italic">
-              Keine Prozesse konfiguriert.
+              {t("processes.noProcesses")}
             </p>
           ) : (
             <div className="space-y-2">
@@ -437,38 +383,20 @@ export function ProcessList({ processes, onChange }: Props) {
                     } ${removingProcesses.has(key) ? "process-row-removing" : ""}`}
                     style={{
                       animationDelay: `${Math.min(idx, 7) * 35}ms`,
-                      transition:
-                        "background-color 200ms cubic-bezier(0.23,1,0.32,1), border-color 200ms cubic-bezier(0.23,1,0.32,1)",
+                      transition: "background-color 200ms cubic-bezier(0.23,1,0.32,1), border-color 200ms cubic-bezier(0.23,1,0.32,1)",
                     }}
                   >
                     <div className="flex items-center gap-3 px-3 py-3">
-                      {/* Icon */}
                       <div
                         className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
-                          icon
-                            ? "bg-transparent"
-                            : isRunning
-                              ? "bg-red-500 shadow-sm shadow-red-500/30"
-                              : "bg-slate-200 dark:bg-slate-700"
+                          icon ? "bg-transparent" : isRunning ? "bg-red-500 shadow-sm shadow-red-500/30" : "bg-slate-200 dark:bg-slate-700"
                         }`}
                       >
                         {icon ? (
-                          <img
-                            src={icon}
-                            alt=""
-                            className="w-9 h-9 object-contain"
-                          />
+                          <img src={icon} alt="" className="w-9 h-9 object-contain" />
                         ) : (
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 10 10"
-                            fill="none"
-                          >
-                            <path
-                              d="M3 2l5 3-5 3V2z"
-                              fill={isRunning ? "white" : "#94a3b8"}
-                            />
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 2l5 3-5 3V2z" fill={isRunning ? "white" : "#94a3b8"} />
                           </svg>
                         )}
                       </div>
@@ -478,10 +406,7 @@ export function ProcessList({ processes, onChange }: Props) {
                           {name}
                         </div>
                         {path && (
-                          <div
-                            className="text-xs font-mono text-slate-400 dark:text-slate-500 truncate select-text"
-                            title={path}
-                          >
+                          <div className="text-xs font-mono text-slate-400 dark:text-slate-500 truncate select-text" title={path}>
                             {path}
                           </div>
                         )}
@@ -492,7 +417,7 @@ export function ProcessList({ processes, onChange }: Props) {
 
                       {isRunning && (
                         <span className="text-xs font-bold bg-red-500 text-white px-2.5 py-0.5 rounded-full shrink-0">
-                          • AKTIV
+                          {t("processes.active")}
                         </span>
                       )}
 
@@ -500,25 +425,11 @@ export function ProcessList({ processes, onChange }: Props) {
                         onClick={() => openEditDialog(wp)}
                         className="w-6 h-6 flex items-center justify-center text-slate-300 dark:text-slate-600
                                    hover:text-slate-500 dark:hover:text-slate-400 shrink-0 rounded btn-press"
-                        style={{
-                          transition:
-                            "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-                        }}
-                        title="Bearbeiten"
+                        style={{ transition: "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)" }}
+                        title={t("processes.editTitle")}
                       >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z"
-                            stroke="currentColor"
-                            strokeWidth="1.3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                       </button>
 
@@ -526,24 +437,11 @@ export function ProcessList({ processes, onChange }: Props) {
                         onClick={() => remove(wp)}
                         className="w-6 h-6 flex items-center justify-center text-slate-300 dark:text-slate-600
                                    hover:text-slate-500 dark:hover:text-slate-400 shrink-0 rounded btn-press"
-                        style={{
-                          transition:
-                            "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-                        }}
-                        title="Entfernen"
+                        style={{ transition: "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)" }}
+                        title={t("processes.removeTitle")}
                       >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M2 2l8 8M10 2l-8 8"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                          />
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                         </svg>
                       </button>
                     </div>
@@ -560,35 +458,21 @@ export function ProcessList({ processes, onChange }: Props) {
         createPortal(
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            onPointerDown={(e) =>
-              handleBackdropPointerDown(
-                e,
-                pickerBackdropPointerStartedOutside,
-              )
-            }
-            onPointerUp={(e) =>
-              handleBackdropPointerUp(
-                e,
-                pickerBackdropPointerStartedOutside,
-                () => setPickerOpen(false),
-              )
-            }
-            onPointerCancel={() => {
-              pickerBackdropPointerStartedOutside.current = false;
-            }}
+            onPointerDown={(e) => handleBackdropPointerDown(e, pickerBackdropPointerStartedOutside)}
+            onPointerUp={(e) => handleBackdropPointerUp(e, pickerBackdropPointerStartedOutside, () => setPickerOpen(false))}
+            onPointerCancel={() => { pickerBackdropPointerStartedOutside.current = false; }}
           >
             <div
               className="w-full max-w-sm mx-4 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-xl flex flex-col overflow-hidden"
               style={{ maxHeight: "min(520px, calc(100vh - 80px))" }}
             >
-              {/* Header */}
               <div className="flex items-start justify-between p-4 border-b border-black/6 dark:border-white/6 shrink-0">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Aus laufenden Prozessen wählen
+                    {t("processes.pickerTitle")}
                   </h3>
                   <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                    Klick fügt den Prozess direkt hinzu
+                    {t("processes.pickerHint")}
                   </p>
                 </div>
                 <button
@@ -596,61 +480,35 @@ export function ProcessList({ processes, onChange }: Props) {
                   className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded transition-colors ml-2 shrink-0"
                 >
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 2l8 8M10 2l-8 8"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
+                    <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
                 </button>
               </div>
-              {/* Search */}
               <div className="p-3 border-b border-black/6 dark:border-white/6 shrink-0">
                 <div className="relative">
-                  <svg
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                  >
-                    <circle
-                      cx="5"
-                      cy="5"
-                      r="3.5"
-                      stroke="currentColor"
-                      strokeWidth="1.3"
-                    />
-                    <path
-                      d="M8 8l2 2"
-                      stroke="currentColor"
-                      strokeWidth="1.3"
-                      strokeLinecap="round"
-                    />
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.3" />
+                    <path d="M8 8l2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
                   </svg>
                   <input
                     autoFocus
                     type="text"
                     value={pickerSearch}
                     onChange={(e) => setPickerSearch(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setPickerOpen(false);
-                    }}
-                    placeholder="Laufende Prozesse durchsuchen..."
+                    onKeyDown={(e) => { if (e.key === "Escape") setPickerOpen(false); }}
+                    placeholder={t("processes.pickerSearch")}
                     className="w-full pl-8 pr-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#2a2a2a] border border-black/8 dark:border-white/8 text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none focus:border-red-400 focus:ring-1 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all"
                   />
                 </div>
               </div>
-              {/* List */}
               <div className="overflow-y-auto flex-1">
                 {pickerLoading ? (
                   <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-                    Lädt...
+                    {t("processes.loading")}
                   </p>
                 ) : filteredPicker.length === 0 ? (
                   <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-                    Keine Prozesse gefunden
+                    {t("processes.noRunning")}
                   </p>
                 ) : (
                   filteredPicker.map((rp) => {
@@ -658,121 +516,49 @@ export function ProcessList({ processes, onChange }: Props) {
                       (p) => wpName(p).toLowerCase() === rp.name.toLowerCase(),
                     );
                     const iconKey = rp.name.toLowerCase();
-                    const icon =
-                      pickerIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
+                    const icon = pickerIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
                     return (
-                      <div
-                        key={rp.name}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-[#2a2a2a] transition-colors"
-                      >
-                        {/* Icon */}
-                        <div
-                          className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-slate-100 dark:bg-slate-700"}`}
-                        >
+                      <div key={rp.name} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-[#2a2a2a] transition-colors">
+                        <div className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-slate-100 dark:bg-slate-700"}`}>
                           {icon ? (
-                            <img
-                              src={icon}
-                              alt=""
-                              className="w-8 h-8 object-contain"
-                            />
+                            <img src={icon} alt="" className="w-8 h-8 object-contain" />
                           ) : (
-                            <svg
-                              width="16"
-                              height="16"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                            >
-                              <rect
-                                x="1.5"
-                                y="2.5"
-                                width="13"
-                                height="11"
-                                rx="2"
-                                stroke="#94a3b8"
-                                strokeWidth="1.3"
-                              />
-                              <path
-                                d="M1.5 6h13"
-                                stroke="#94a3b8"
-                                strokeWidth="1.1"
-                              />
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                              <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="#94a3b8" strokeWidth="1.3" />
+                              <path d="M1.5 6h13" stroke="#94a3b8" strokeWidth="1.1" />
                               <circle cx="4" cy="4.25" r="0.8" fill="#94a3b8" />
-                              <circle
-                                cx="6.5"
-                                cy="4.25"
-                                r="0.8"
-                                fill="#94a3b8"
-                              />
-                              <path
-                                d="M4.5 9l2.5 1.5-2.5 1.5"
-                                stroke="#94a3b8"
-                                strokeWidth="1.1"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                              <path
-                                d="M9 11.5h2"
-                                stroke="#94a3b8"
-                                strokeWidth="1.1"
-                                strokeLinecap="round"
-                              />
+                              <circle cx="6.5" cy="4.25" r="0.8" fill="#94a3b8" />
+                              <path d="M4.5 9l2.5 1.5-2.5 1.5" stroke="#94a3b8" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M9 11.5h2" stroke="#94a3b8" strokeWidth="1.1" strokeLinecap="round" />
                             </svg>
                           )}
                         </div>
-                        {/* Name + path */}
                         <div className="flex-1 min-w-0">
-                          <div
-                            className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}
-                          >
+                          <div className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}>
                             {rp.name}
                           </div>
                           {rp.path && (
-                            <div
-                              className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate mt-0.5"
-                              title={rp.path}
-                            >
+                            <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate mt-0.5" title={rp.path}>
                               {rp.path}
                             </div>
                           )}
                         </div>
-                        {/* Add / Added button */}
                         {alreadyAdded ? (
                           <span className="flex items-center gap-1 text-xs text-emerald-500 dark:text-emerald-400 shrink-0 font-medium">
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="none"
-                            >
-                              <path
-                                d="M2 6l3 3 5-5"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
-                            Hinzugefügt
+                            {t("processes.added")}
                           </span>
                         ) : (
                           <button
                             onClick={() => pickProcess(rp)}
                             className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 shrink-0 transition-colors font-medium btn-press"
                           >
-                            <svg
-                              width="11"
-                              height="11"
-                              viewBox="0 0 11 11"
-                              fill="none"
-                            >
-                              <path
-                                d="M5.5 1v9M1 5.5h9"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                              />
+                            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                              <path d="M5.5 1v9M1 5.5h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                             </svg>
-                            Hinzufügen
+                            {t("processes.add")}
                           </button>
                         )}
                       </div>
@@ -790,29 +576,18 @@ export function ProcessList({ processes, onChange }: Props) {
         createPortal(
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            onPointerDown={(e) =>
-              handleBackdropPointerDown(e, editBackdropPointerStartedOutside)
-            }
-            onPointerUp={(e) =>
-              handleBackdropPointerUp(
-                e,
-                editBackdropPointerStartedOutside,
-                closeEditDialog,
-              )
-            }
-            onPointerCancel={() => {
-              editBackdropPointerStartedOutside.current = false;
-            }}
+            onPointerDown={(e) => handleBackdropPointerDown(e, editBackdropPointerStartedOutside)}
+            onPointerUp={(e) => handleBackdropPointerUp(e, editBackdropPointerStartedOutside, closeEditDialog)}
+            onPointerCancel={() => { editBackdropPointerStartedOutside.current = false; }}
           >
             <div className="w-full max-w-sm mx-4 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-xl p-5 space-y-4">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Prozess bearbeiten
+                {t("processes.editProcess")}
               </h3>
 
-              {/* Name */}
               <div className="space-y-1">
                 <label className="text-xs text-slate-500 dark:text-slate-400">
-                  Prozessname
+                  {t("processes.processName")}
                 </label>
                 <input
                   autoFocus={!editPathIsExe}
@@ -824,7 +599,7 @@ export function ProcessList({ processes, onChange }: Props) {
                     if (e.key === "Enter") void commitEditDialog();
                     if (e.key === "Escape") closeEditDialog();
                   }}
-                  placeholder="prozessname.exe"
+                  placeholder={t("processes.namePlaceholder")}
                   className={`w-full px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
                            text-sm font-mono text-slate-800 dark:text-slate-100 outline-none
                            focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all ${
@@ -833,10 +608,9 @@ export function ProcessList({ processes, onChange }: Props) {
                 />
               </div>
 
-              {/* Path */}
               <div className="space-y-1">
                 <label className="text-xs text-slate-500 dark:text-slate-400">
-                  Pfad-Filter (optional)
+                  {t("processes.pathFilter")}
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -847,7 +621,7 @@ export function ProcessList({ processes, onChange }: Props) {
                       if (e.key === "Enter") void commitEditDialog();
                       if (e.key === "Escape") closeEditDialog();
                     }}
-                    placeholder="z.B. C:\Games\MyGame\game.exe"
+                    placeholder={t("processes.pathPlaceholder")}
                     className={`flex-1 px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border rounded-xl
                              text-xs font-mono text-slate-600 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 outline-none
                              focus:ring-2 transition-all ${
@@ -857,28 +631,16 @@ export function ProcessList({ processes, onChange }: Props) {
                              }`}
                   />
                   <button
-                    onClick={() =>
-                      void browseExe((path, filename) => {
-                        handleEditPathChange(path);
-                        if (filename) setEditName(filename);
-                      })
-                    }
-                    title="EXE-Datei auswählen"
+                    onClick={() => void browseExe((path, filename) => {
+                      handleEditPathChange(path);
+                      if (filename) setEditName(filename);
+                    })}
+                    title={t("processes.browseExeTitle")}
                     className="px-3 py-2 rounded-xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#333] transition-colors btn-press"
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path
-                        d="M1.5 2.5h5l1.5 1.5H12.5v8H1.5z"
-                        stroke="currentColor"
-                        strokeWidth="1.2"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M7 7v3.5M5.5 9H8.5"
-                        stroke="currentColor"
-                        strokeWidth="1.2"
-                        strokeLinecap="round"
-                      />
+                      <path d="M1.5 2.5h5l1.5 1.5H12.5v8H1.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+                      <path d="M7 7v3.5M5.5 9H8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
                     </svg>
                   </button>
                 </div>
@@ -892,14 +654,14 @@ export function ProcessList({ processes, onChange }: Props) {
                   onClick={closeEditDialog}
                   className="flex-1 py-2 border border-black/10 dark:border-white/10 text-slate-600 dark:text-slate-300 text-sm rounded-xl hover:bg-slate-50 dark:hover:bg-[#2a2a2a] transition-colors btn-press"
                 >
-                  Abbrechen
+                  {t("processes.cancel")}
                 </button>
                 <button
                   onClick={() => void commitEditDialog()}
                   disabled={!editName.trim()}
                   className="flex-1 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors btn-press"
                 >
-                  Speichern
+                  {t("processes.save")}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 import type {
   HzChangedPayload,
   LogEntry,
@@ -44,6 +45,7 @@ function saveIconToCache(name: string, icon: string) {
 }
 
 export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
+  const { t, i18n } = useTranslation();
   const [currentHz, setCurrentHz] = useState<number | null>(null);
   const [mode, setMode] = useState<"STANDARD" | "GAME">("STANDARD");
   const [monitorLabel, setMonitorLabel] = useState<string>("");
@@ -59,7 +61,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const hzRef = useRef<HTMLSpanElement>(null);
 
   function addLog(payload: HzChangedPayload) {
-    const timestamp = new Date().toLocaleTimeString("de-DE", {
+    const timestamp = new Date().toLocaleTimeString(i18n.language, {
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -197,7 +199,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         {/* Current Hz card */}
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1">
           <div className="flex items-start justify-between mb-2">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Aktuelle Bildwiederholrate</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t("status.currentHz")}</span>
             <span
               key={mode}
               className={`text-xs font-bold px-2.5 py-0.5 rounded-full badge-anim ${
@@ -206,7 +208,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                   : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
               }`}
             >
-              {mode === "GAME" ? "● GAME" : "● STANDARD"}
+              {mode === "GAME" ? `● ${t("status.badgeGame")}` : `● ${t("mode.standard").toUpperCase()}`}
             </span>
           </div>
           <div className="flex items-baseline gap-1.5">
@@ -227,21 +229,21 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
           )}
           <Sparkline points={hzHistory} mode={mode} now={now} />
           <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
-            <span>Letzte Stunde</span>
-            <span>{gameMinutes} Min Game · {standardMinutes} Min Standard</span>
+            <span>{t("status.lastHour")}</span>
+            <span>{t("status.timeGame", { game: gameMinutes, standard: standardMinutes })}</span>
           </div>
         </div>
 
         {/* Active Processes card */}
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Aktive Prozesse</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t("status.activeProcesses")}</span>
             <span className="text-xs text-slate-400 dark:text-slate-500">
-              {runningProcesses.length} von {watchedProcesses.length} läuft
+              {t("status.runningOf", { running: runningProcesses.length, total: watchedProcesses.length })}
             </span>
           </div>
           {watchedProcesses.length === 0 ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500 italic">Keine Prozesse konfiguriert.</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 italic">{t("status.noProcesses")}</p>
           ) : (
             <div className="space-y-2">
               {watchedProcesses.slice(0, 5).map((wp) => {
@@ -283,14 +285,14 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                         isRunning ? "text-slate-600 dark:text-slate-300" : "text-slate-400 dark:text-slate-500"
                       }`}
                     >
-                      {isRunning ? "Läuft" : "Wartet"}
+                      {isRunning ? t("status.running") : t("status.waiting")}
                     </span>
                   </div>
                 );
               })}
               {watchedProcesses.length > 5 && (
                 <p className="text-xs text-slate-400 dark:text-slate-500 pl-9">
-                  +{watchedProcesses.length - 5} weitere
+                  {t("status.moreProcesses", { count: watchedProcesses.length - 5 })}
                 </p>
               )}
             </div>
@@ -302,29 +304,29 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] px-5 py-4 flex items-center gap-8 anim-fade-up stagger-3">
         <div>
           <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{todaySwitches}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">× gewechselt<br/>automatisch</div>
+          <div className="text-xs text-slate-400 dark:text-slate-500 whitespace-pre-line">{t("status.switchedAuto")}</div>
         </div>
         <div>
           <div className="text-2xl font-black text-red-500">{formatDuration(gameMinutes)}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">im Game-Mode</div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">{t("status.inGameMode")}</div>
         </div>
         <div>
           <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{formatDuration(standardMinutes)}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">im Standard</div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">{t("status.inStandard")}</div>
         </div>
-        <div className="ml-auto text-xs text-slate-400 dark:text-slate-500">Heute</div>
+        <div className="ml-auto text-xs text-slate-400 dark:text-slate-500">{t("status.today")}</div>
       </div>
 
       {/* Event log */}
       <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-4">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">Ereignisprotokoll</span>
+          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t("status.eventLog")}</span>
           <div className="flex gap-1">
             {(
               [
-                { id: "all", label: "Alle" },
-                { id: "hz", label: "Hz-Wechsel" },
-                { id: "process", label: "Prozesse" },
+                { id: "all", label: t("status.filterAll") },
+                { id: "hz", label: t("status.filterHz") },
+                { id: "process", label: t("status.filterProcess") },
               ] as const
             ).map(({ id, label }) => (
               <button
@@ -343,7 +345,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         </div>
         <div className="space-y-3 min-h-20">
           {filteredLog.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500 italic">Noch keine Ereignisse.</p>
+            <p className="text-sm text-slate-400 dark:text-slate-500 italic">{t("status.noEvents")}</p>
           ) : (
             filteredLog.map((entry, i) => (
               <div
@@ -375,7 +377,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                         : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
                     }`}
                   >
-                    {entry.event_type === "process_stop" ? "STANDBY" : "GAME"}
+                    {entry.event_type === "process_stop" ? t("status.badgeStandby") : t("status.badgeGame")}
                   </span>
                 )}
               </div>

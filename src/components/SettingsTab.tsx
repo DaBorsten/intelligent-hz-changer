@@ -4,6 +4,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useTheme } from "../useTheme";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 
 interface AppSettings {
   theme: string;
@@ -11,6 +13,7 @@ interface AppSettings {
   start_minimized: boolean;
   close_to_tray: boolean;
   check_updates: boolean;
+  language: string;
 }
 
 const DEFAULT: AppSettings = {
@@ -19,6 +22,7 @@ const DEFAULT: AppSettings = {
   start_minimized: false,
   close_to_tray: true,
   check_updates: true,
+  language: "de",
 };
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -121,6 +125,7 @@ function UpdateDialog({
   installing: boolean;
   progress: number | null;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={!installing ? onClose : undefined} />
@@ -130,7 +135,7 @@ function UpdateDialog({
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Update verfügbar – v{info.tag}
+                {t("settings.updateAvailable", { version: info.tag })}
               </div>
             </div>
             {!installing && (
@@ -145,14 +150,14 @@ function UpdateDialog({
             )}
           </div>
           <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 ml-4">
-            Änderungen in dieser Version
+            {t("settings.changelog")}
           </div>
         </div>
 
         <div className="px-5 py-4 max-h-64 overflow-y-auto">
           {info.changelog
             ? renderChangelog(info.changelog)
-            : <p className="text-sm text-slate-400">Keine Changelogs vorhanden.</p>
+            : <p className="text-sm text-slate-400">{t("settings.noChangelog")}</p>
           }
         </div>
 
@@ -165,7 +170,7 @@ function UpdateDialog({
               />
             </div>
             <p className="text-xs text-slate-400 mt-1.5">
-              {progress !== null ? `${progress}% heruntergeladen…` : "Wird installiert…"}
+              {progress !== null ? t("settings.downloadProgress", { pct: progress }) : t("settings.installing")}
             </p>
           </div>
         )}
@@ -176,7 +181,7 @@ function UpdateDialog({
             disabled={installing}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
           >
-            {installing ? "Wird aktualisiert…" : "Jetzt aktualisieren"}
+            {installing ? t("settings.updating") : t("settings.updateNow")}
           </button>
         </div>
       </div>
@@ -207,7 +212,7 @@ function ThemeSegmentedControl({
     if (btn) {
       setPillStyle({ left: btn.offsetLeft, width: btn.offsetWidth });
     }
-  }, [displayIndex]);
+  }, [displayIndex, options]);
 
   function getIndexFromX(x: number): number {
     const el = containerRef.current;
@@ -244,7 +249,6 @@ function ThemeSegmentedControl({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* sliding pill — positioned to exactly match the active button */}
       <div
         className="absolute top-0.5 bottom-0.5 rounded-md bg-white dark:bg-[#1c1c1c] shadow-sm pointer-events-none"
         style={{
@@ -274,6 +278,7 @@ function ThemeSegmentedControl({
 }
 
 export function SettingsTab() {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT);
   const [version, setVersion] = useState("");
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
@@ -286,7 +291,10 @@ export function SettingsTab() {
   const autoCheckDone = useRef(false);
 
   useEffect(() => {
-    invoke<AppSettings>("load_settings").then(setSettings).catch(() => {});
+    invoke<AppSettings>("load_settings").then((s) => {
+      setSettings(s);
+      if (s.language) void i18n.changeLanguage(s.language);
+    }).catch(() => {});
     getVersion().then(setVersion).catch(() => {});
   }, []);
 
@@ -305,6 +313,9 @@ export function SettingsTab() {
       if (partial.theme) {
         setTheme(partial.theme as "light" | "dark" | "system");
         await invoke("set_window_theme", { theme: partial.theme });
+      }
+      if (partial.language) {
+        await i18n.changeLanguage(partial.language);
       }
     } catch (e) {
       console.error(e);
@@ -327,8 +338,8 @@ export function SettingsTab() {
         setShowDialog(true);
       }
       invoke("show_update_notification", {
-        title: "Update verfügbar",
-        body: `Intelligent Hz Changer v${update.version} ist verfügbar.`,
+        title: t("settings.notifUpdateTitle"),
+        body: t("settings.notifUpdateBody", { version: update.version }),
       }).catch(() => {});
     } catch {
       setUpdateStatus("error");
@@ -358,9 +369,14 @@ export function SettingsTab() {
   }
 
   const themeOptions = [
-    { value: "system", label: "System" },
-    { value: "light", label: "Hell" },
-    { value: "dark", label: "Dunkel" },
+    { value: "system", label: t("settings.themeSystem") },
+    { value: "light", label: t("settings.themeLight") },
+    { value: "dark", label: t("settings.themeDark") },
+  ];
+
+  const languageOptions = [
+    { value: "de", label: t("settings.langDE") },
+    { value: "en", label: t("settings.langEN") },
   ];
 
   return (
@@ -378,10 +394,10 @@ export function SettingsTab() {
       <div className="space-y-6">
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            Darstellung
+            {t("settings.sectionAppearance")}
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
-            <SettingRow label="Theme" description="Farbschema der App">
+            <SettingRow label={t("settings.themeLabel")} description={t("settings.themeDesc")}>
               <ThemeSegmentedControl
                 options={themeOptions}
                 value={settings.theme}
@@ -393,13 +409,28 @@ export function SettingsTab() {
 
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            Startverhalten
+            {t("settings.sectionLanguage")}
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
-            <SettingRow label="Autostart" description="App beim Windows-Start automatisch starten">
+            <SettingRow label={t("settings.languageLabel")} description={t("settings.languageDesc")}>
+              <ThemeSegmentedControl
+                options={languageOptions}
+                value={settings.language ?? i18n.language}
+                onChange={(v) => void patch({ language: v })}
+              />
+            </SettingRow>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            {t("settings.sectionStartup")}
+          </h2>
+          <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
+            <SettingRow label={t("settings.autostartLabel")} description={t("settings.autostartDesc")}>
               <Toggle checked={settings.autostart} onChange={(v) => void patch({ autostart: v })} />
             </SettingRow>
-            <SettingRow label="Minimiert starten" description="App beim Start direkt im Tray verstecken">
+            <SettingRow label={t("settings.startMinimizedLabel")} description={t("settings.startMinimizedDesc")}>
               <Toggle
                 checked={settings.start_minimized}
                 onChange={(v) => void patch({ start_minimized: v })}
@@ -410,12 +441,12 @@ export function SettingsTab() {
 
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            Systemtray
+            {t("settings.sectionTray")}
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
             <SettingRow
-              label="In Tray minimieren beim Schließen"
-              description="Fenster schließen versteckt die App statt sie zu beenden"
+              label={t("settings.closeToTrayLabel")}
+              description={t("settings.closeToTrayDesc")}
             >
               <Toggle
                 checked={settings.close_to_tray}
@@ -427,12 +458,12 @@ export function SettingsTab() {
 
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            Updates
+            {t("settings.sectionUpdates")}
           </h2>
           <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
             <SettingRow
-              label="Automatisch nach Updates suchen"
-              description="Beim Start auf neue Versionen prüfen"
+              label={t("settings.checkUpdatesLabel")}
+              description={t("settings.checkUpdatesDesc")}
             >
               <Toggle
                 checked={settings.check_updates}
@@ -440,30 +471,30 @@ export function SettingsTab() {
               />
             </SettingRow>
             <SettingRow
-              label="Jetzt nach Updates suchen"
-              description={version ? `Aktuelle Version: v${version}` : undefined}
+              label={t("settings.checkNowLabel")}
+              description={version ? t("settings.currentVersion", { version }) : undefined}
             >
               <div className="flex items-center gap-2">
                 {updateStatus === "up-to-date" && (
-                  <span className="text-xs text-emerald-500 font-medium">Aktuell</span>
+                  <span className="text-xs text-emerald-500 font-medium">{t("settings.upToDate")}</span>
                 )}
                 {updateStatus === "available" && (
                   <button
                     onClick={() => setShowDialog(true)}
                     className="text-xs text-red-500 font-medium hover:text-red-600 transition-colors underline underline-offset-2"
                   >
-                    v{updateInfo?.tag} verfügbar
+                    {t("settings.versionAvailable", { version: updateInfo?.tag })}
                   </button>
                 )}
                 {updateStatus === "error" && (
-                  <span className="text-xs text-red-400 font-medium">Fehler</span>
+                  <span className="text-xs text-red-400 font-medium">{t("settings.updateError")}</span>
                 )}
                 <button
                   onClick={() => void checkUpdates(false)}
                   disabled={updateStatus === "checking"}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors"
                 >
-                  {updateStatus === "checking" ? "Wird geprüft…" : "Prüfen"}
+                  {updateStatus === "checking" ? t("settings.checking") : t("settings.checkBtn")}
                 </button>
               </div>
             </SettingRow>

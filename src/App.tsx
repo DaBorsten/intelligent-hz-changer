@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Settings } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 import { ProcessList } from "./components/ProcessList";
 import { MonitorConfig } from "./components/MonitorConfig";
 import { StatusView } from "./components/StatusView";
@@ -35,33 +36,9 @@ function PulseIcon({ active }: { active?: boolean }) {
 function ListIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <line
-        x1="1.5"
-        y1="4"
-        x2="13.5"
-        y2="4"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <line
-        x1="1.5"
-        y1="7.5"
-        x2="13.5"
-        y2="7.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <line
-        x1="1.5"
-        y1="11"
-        x2="9"
-        y2="11"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <line x1="1.5" y1="4" x2="13.5" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <line x1="1.5" y1="7.5" x2="13.5" y2="7.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <line x1="1.5" y1="11" x2="9" y2="11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -69,21 +46,8 @@ function ListIcon() {
 function MonitorIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <rect
-        x="1"
-        y="2"
-        width="13"
-        height="9"
-        rx="1.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M5 13h5M7.5 11v2"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <rect x="1" y="2" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5 13h5M7.5 11v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -122,12 +86,13 @@ function Toggle({
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("status");
   const [config, setConfig] = useState<WatchConfig>(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);
   const [active, setActive] = useState(true);
   const [headerHz, setHeaderHz] = useState<number | null>(null);
-  const [headerMode, setHeaderMode] = useState<"Standard" | "Game">("Standard");
+  const [headerMode, setHeaderMode] = useState<"standard" | "game">("standard");
 
   useEffect(() => {
     invoke<WatchConfig>("load_config")
@@ -147,15 +112,13 @@ export default function App() {
 
     invoke<string[]>("get_running_watched")
       .then((running) => {
-        if (running.length > 0) setHeaderMode("Game");
+        if (running.length > 0) setHeaderMode("game");
       })
       .catch(() => {});
 
     const unlistenHz = listen<HzChangedPayload>("hz-changed", (e) => {
       setHeaderHz(e.payload.current_hz);
-      setHeaderMode(
-        e.payload.event_type === "process_start" ? "Game" : "Standard",
-      );
+      setHeaderMode(e.payload.event_type === "process_start" ? "game" : "standard");
     });
 
     const unlistenEnabled = listen<boolean>("enabled-changed", (e) => {
@@ -192,14 +155,10 @@ export default function App() {
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    {
-      id: "status",
-      label: "Status",
-      icon: <PulseIcon active={tab === "status"} />,
-    },
-    { id: "processes", label: "Prozesse", icon: <ListIcon /> },
-    { id: "monitor", label: "Monitor & Hz", icon: <MonitorIcon /> },
-    { id: "settings", label: "Einstellungen", icon: <SettingsIcon /> },
+    { id: "status", label: t("tabs.status"), icon: <PulseIcon active={tab === "status"} /> },
+    { id: "processes", label: t("tabs.processes"), icon: <ListIcon /> },
+    { id: "monitor", label: t("tabs.monitor"), icon: <MonitorIcon /> },
+    { id: "settings", label: t("tabs.settings"), icon: <SettingsIcon /> },
   ];
 
   return (
@@ -214,12 +173,12 @@ export default function App() {
             Intelligent Hz Changer
           </div>
           <div className="text-xs text-slate-400 dark:text-slate-500 leading-tight">
-            Automatischer Wechsel der Bildwiederholrate
+            {t("app.subtitle")}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            Aktiv
+            {t("app.active")}
           </span>
           <Toggle
             checked={active}
@@ -253,13 +212,13 @@ export default function App() {
         {/* Hz status pill */}
         <div className="flex items-center gap-1.5 pb-1">
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${headerMode === "Game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
+            className={`w-2 h-2 rounded-full shrink-0 ${headerMode === "game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
           />
           <span
             key={headerMode}
             className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap badge-anim"
           >
-            {headerMode}
+            {t(headerMode === "game" ? "mode.game" : "mode.standard")}
           </span>
           {headerHz != null && (
             <span key={headerHz} className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5 badge-anim">
