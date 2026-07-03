@@ -118,7 +118,18 @@ export default function App() {
 
     const unlistenHz = listen<HzChangedPayload>("hz-changed", (e) => {
       setHeaderHz(e.payload.current_hz);
-      setHeaderMode(e.payload.event_type === "process_start" ? "game" : "standard");
+      if (e.payload.event_type === "process_start") {
+        setHeaderMode("game");
+      } else if (e.payload.event_type === "process_stop") {
+        setHeaderMode("standard");
+      } else {
+        // system event (e.g. the ~600ms startup ping): don't clobber the mode —
+        // reconcile has run by now, so trust the running set as source of truth.
+        // A game already at target Hz fires no process_start event.
+        invoke<string[]>("get_running_watched")
+          .then((running) => setHeaderMode(running.length > 0 ? "game" : "standard"))
+          .catch(() => {});
+      }
     });
 
     const unlistenEnabled = listen<boolean>("enabled-changed", (e) => {
@@ -130,6 +141,18 @@ export default function App() {
       void unlistenEnabled.then((fn) => fn());
     };
   }, []);
+
+  // Poll current Hz so the header reflects manual changes made in Windows,
+  // which fire no hz-changed event. Matches StatusView's 5s cadence.
+  useEffect(() => {
+    if (!config.monitor_name) return;
+    const poll = () =>
+      invoke<number>("get_current_hz", { monitorName: config.monitor_name })
+        .then(setHeaderHz)
+        .catch(() => {});
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [config.monitor_name]);
 
   function patchConfig(partial: Partial<WatchConfig>, autoSave?: boolean) {
     setConfig((prev) => ({ ...prev, ...partial }));

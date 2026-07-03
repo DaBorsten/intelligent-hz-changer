@@ -47,7 +47,6 @@ function saveIconToCache(name: string, icon: string) {
 export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const { t, i18n } = useTranslation();
   const [currentHz, setCurrentHz] = useState<number | null>(null);
-  const [mode, setMode] = useState<"STANDARD" | "GAME">("STANDARD");
   const [monitorLabel, setMonitorLabel] = useState<string>("");
   const [runningProcesses, setRunningProcesses] = useState<string[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -59,6 +58,10 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
     () => loadIconCache()
   );
   const hzRef = useRef<HTMLSpanElement>(null);
+
+  // ponytail: mode is derived from the running set (source of truth), not the
+  // hz-changed event — a game already at target Hz on startup fires no event.
+  const mode: "STANDARD" | "GAME" = runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
   function addLog(payload: HzChangedPayload) {
     const timestamp = new Date().toLocaleTimeString(i18n.language, {
@@ -110,8 +113,6 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       const timestamp = Date.now();
       setNow(timestamp);
       setCurrentHz(hz);
-      const isGame = event.payload.event_type === "process_start";
-      setMode(isGame ? "GAME" : "STANDARD");
       setHzHistory((prev) => {
         const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
         return [...filtered, { time: timestamp, hz }];
