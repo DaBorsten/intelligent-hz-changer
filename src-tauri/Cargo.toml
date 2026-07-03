@@ -1,6 +1,6 @@
 [package]
 name = "intelligent-hz-changer"
-version = "0.1.5"
+version = "0.1.6"
 description = "Eine App zum automatischen Wechseln der Bildschirm Hz anhand von laufenden Prozessen"
 authors = ["you"]
 edition = "2021"
