@@ -16,6 +16,9 @@ pub struct AppSettings {
     /// defaults to `true` when absent and is preserved on settings saves.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Opt-in file logging for diagnosing Hz switches. Off by default.
+    #[serde(default)]
+    pub debug_logging: bool,
 }
 
 impl Default for AppSettings {
@@ -27,6 +30,7 @@ impl Default for AppSettings {
             close_to_tray: true,
             check_updates: true,
             enabled: true,
+            debug_logging: false,
         }
     }
 }

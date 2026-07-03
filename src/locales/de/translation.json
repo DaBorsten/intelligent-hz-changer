@@ -132,6 +132,12 @@
     "languageDesc": "App-Sprache",
     "langDE": "Deutsch",
     "langEN": "Englisch",
+    "sectionDiagnostics": "Diagnose",
+    "debugLoggingLabel": "Debug-Protokollierung",
+    "debugLoggingDesc": "Hz-Wechsel in eine Log-Datei schreiben (debug.log)",
+    "openLogLabel": "Log-Datei",
+    "openLogDesc": "Protokolldatei zur Fehlersuche öffnen",
+    "openLogBtn": "Öffnen",
     "notifUpdateTitle": "Update verfügbar",
     "notifUpdateBody": "Intelligent Hz Changer v{{version}} ist verfügbar."
   }

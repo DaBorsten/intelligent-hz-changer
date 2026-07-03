@@ -1,5 +1,6 @@
 mod display;
 mod identify;
+mod logging;
 mod process_icon;
 mod process_watcher;
 mod settings;
@@ -222,6 +223,20 @@ fn get_enabled(state: tauri::State<'_, AppState>) -> bool {
     state.watch_state.is_enabled()
 }
 
+/// Opens the debug log in the OS default handler. Creates it empty if it doesn't
+/// exist yet so there's always something to open.
+#[tauri::command]
+fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = logging::path().ok_or("log path not initialized")?;
+    if !path.exists() {
+        std::fs::write(&path, b"").map_err(|e| e.to_string())?;
+    }
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_running_watched(state: tauri::State<'_, AppState>) -> Vec<String> {
     state.watch_state.get_running()
@@ -285,6 +300,9 @@ fn save_settings(
     // `enabled` is owned by set_enabled/the tray, not the settings UI — keep the
     // live runtime value so a settings save can never silently re-enable the watcher.
     s.enabled = state.watch_state.is_enabled();
+
+    // Apply the debug-logging toggle to the live runtime flag immediately.
+    logging::set_enabled(s.debug_logging);
 
     // Persist close_to_tray in runtime state
     state.close_to_tray.store(
@@ -472,6 +490,13 @@ pub fn run() {
             // Load persisted settings up front so the tray reflects the restored state.
             let app_settings = read_settings(app.handle());
 
+            // Initialize opt-in file logging before the watcher starts so the very
+            // first process-start edge is captured when the toggle is on.
+            if let Ok(dir) = app.path().app_config_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                logging::init(dir.join("debug.log"), app_settings.debug_logging);
+            }
+
             // System tray — label shows the action, so it is inverted vs. enabled state.
             let toggle_label = if app_settings.enabled { "Deaktivieren" } else { "Aktivieren" };
             let toggle_item = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
@@ -617,6 +642,7 @@ pub fn run() {
             get_enabled,
             load_settings,
             save_settings,
+            open_log_file,
             show_update_notification,
             check_exe_exists,
         ])

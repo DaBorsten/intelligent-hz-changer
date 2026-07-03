@@ -132,6 +132,12 @@
     "languageDesc": "App language",
     "langDE": "German",
     "langEN": "English",
+    "sectionDiagnostics": "Diagnostics",
+    "debugLoggingLabel": "Debug logging",
+    "debugLoggingDesc": "Write Hz switches to a log file (debug.log)",
+    "openLogLabel": "Log file",
+    "openLogDesc": "Open the log file for troubleshooting",
+    "openLogBtn": "Open",
     "notifUpdateTitle": "Update available",
     "notifUpdateBody": "Intelligent Hz Changer v{{version}} is available."
   }

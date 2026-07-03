@@ -189,7 +189,14 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
 /// `watching` set, so neither counts nor threads are duplicated.
 #[cfg(windows)]
 fn register_process(state: &Arc<WatchState>, app: &tauri::AppHandle, name: &str, exe_path: &str, pid: u32) {
-    if state.on_process_start(name, exe_path, pid) && state.is_enabled() {
+    let started = state.on_process_start(name, exe_path, pid);
+    if started {
+        crate::logging::log(&format!(
+            "process_start edge: name='{name}' pid={pid} exe='{exe_path}' enabled={}",
+            state.is_enabled()
+        ));
+    }
+    if started && state.is_enabled() {
         sync_hz(state, app, format!("{name} gestartet"), Some(name.to_string()), "process_start");
     }
 
@@ -221,13 +228,22 @@ pub fn set_monitor_hz(
 ) {
     let _guard = state.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
     let prev = crate::display::get_current_refresh_rate(monitor);
+    crate::logging::log(&format!(
+        "set_monitor_hz: monitor='{monitor}' prev={prev}Hz target={target}Hz reason='{reason}' event={event_type}"
+    ));
     if prev == target {
+        crate::logging::log("  -> skip: monitor already at target (no-op)");
         return;
     }
     if let Err(e) = crate::display::set_refresh_rate(monitor, target) {
+        crate::logging::log(&format!("  -> set_refresh_rate FAILED: {e}"));
         eprintln!("set_refresh_rate error: {e}");
         return;
     }
+    let after = crate::display::get_current_refresh_rate(monitor);
+    crate::logging::log(&format!(
+        "  -> set_refresh_rate OK: {prev}Hz -> {target}Hz (monitor now reports {after}Hz)"
+    ));
     let mut payload = serde_json::json!({
         "current_hz": target,
         "hz_from": prev,
@@ -261,6 +277,9 @@ pub fn sync_hz(
         };
         (monitor, target)
     };
+    crate::logging::log(&format!(
+        "sync_hz: any_running={any_running} -> target={target}Hz (event={event_type}, reason='{reason}')"
+    ));
     set_monitor_hz(state, app, &monitor, target, reason, process_name, event_type);
 }
 
@@ -290,7 +309,11 @@ fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHan
         .unwrap_or_else(|e| e.into_inner())
         .remove(&pid);
 
-    if state.on_process_stop(pid) && state.is_enabled() {
+    let stopped_last = state.on_process_stop(pid);
+    if stopped_last {
+        crate::logging::log(&format!("process_stop edge: name='{name}' pid={pid} (last instance)"));
+    }
+    if stopped_last && state.is_enabled() {
         sync_hz(
             &state,
             &app,

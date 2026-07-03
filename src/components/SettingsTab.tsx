@@ -15,6 +15,7 @@ interface AppSettings {
   close_to_tray: boolean;
   check_updates: boolean;
   language: string;
+  debug_logging: boolean;
 }
 
 const DEFAULT: AppSettings = {
@@ -24,6 +25,7 @@ const DEFAULT: AppSettings = {
   close_to_tray: true,
   check_updates: true,
   language: "de",
+  debug_logging: false,
 };
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -499,6 +501,34 @@ export function SettingsTab() {
                   {updateStatus === "checking" ? t("settings.checking") : t("settings.checkBtn")}
                 </button>
               </div>
+            </SettingRow>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            {t("settings.sectionDiagnostics")}
+          </h2>
+          <div className="bg-slate-50 dark:bg-[#242424] rounded-2xl border border-black/8 dark:border-white/8 px-4">
+            <SettingRow
+              label={t("settings.debugLoggingLabel")}
+              description={t("settings.debugLoggingDesc")}
+            >
+              <Toggle
+                checked={settings.debug_logging}
+                onChange={(v) => void patch({ debug_logging: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label={t("settings.openLogLabel")}
+              description={t("settings.openLogDesc")}
+            >
+              <button
+                onClick={() => void invoke("open_log_file").catch((e) => console.error(e))}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+              >
+                {t("settings.openLogBtn")}
+              </button>
             </SettingRow>
           </div>
         </section>
