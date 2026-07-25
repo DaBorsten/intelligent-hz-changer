@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   HzChangedPayload,
-  LogEntry,
   HzPoint,
+  LogEntry,
   MonitorInfoExtended,
   WatchedProcess,
 } from "../types";
-import { wpName, wpKey } from "../types";
+import { wpKey, wpName } from "../types";
 
 interface Props {
   monitorName: string;
@@ -22,12 +22,16 @@ const ICON_CACHE_KEY = "hz-process-icons";
 
 function loadIconCache(): Record<string, string | undefined> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(ICON_CACHE_KEY) ?? "{}");
+    const parsed: unknown = JSON.parse(
+      localStorage.getItem(ICON_CACHE_KEY) ?? "{}",
+    );
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {};
     }
     return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
     );
   } catch {
     return {};
@@ -54,38 +58,42 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   const [hzHistory, setHzHistory] = useState<HzPoint[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [todaySwitches, setTodaySwitches] = useState(0);
-  const [processIcons, setProcessIcons] = useState<Record<string, string | null | undefined>>(
-    () => loadIconCache()
-  );
+  const [processIcons, setProcessIcons] = useState<
+    Record<string, string | null | undefined>
+  >(() => loadIconCache());
   const hzRef = useRef<HTMLSpanElement>(null);
 
   // ponytail: mode is derived from the running set (source of truth), not the
   // hz-changed event — a game already at target Hz on startup fires no event.
-  const mode: "STANDARD" | "GAME" = runningProcesses.length > 0 ? "GAME" : "STANDARD";
+  const mode: "STANDARD" | "GAME" =
+    runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
-  function addLog(payload: HzChangedPayload) {
-    const timestamp = new Date().toLocaleTimeString(i18n.language, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setLog((prev) =>
-      [
-        {
-          id: ++logIdCounter,
-          timestamp,
-          message: payload.reason,
-          hz_from: payload.hz_from,
-          hz_to: payload.hz_to,
-          process_name: payload.process_name,
-          event_type: payload.event_type ?? "system",
-        } as LogEntry,
-        ...prev,
-      ].slice(0, 50)
-    );
-    if (payload.event_type !== "system") {
-      setTodaySwitches((n) => n + 1);
-    }
-  }
+  const addLog = useCallback(
+    (payload: HzChangedPayload) => {
+      const timestamp = new Date().toLocaleTimeString(i18n.language, {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      setLog((prev) =>
+        [
+          {
+            id: ++logIdCounter,
+            timestamp,
+            message: payload.reason,
+            hz_from: payload.hz_from,
+            hz_to: payload.hz_to,
+            process_name: payload.process_name,
+            event_type: payload.event_type ?? "system",
+          } as LogEntry,
+          ...prev,
+        ].slice(0, 50),
+      );
+      if (payload.event_type !== "system") {
+        setTodaySwitches((n) => n + 1);
+      }
+    },
+    [i18n.language],
+  );
 
   const refreshStatus = useCallback(() => {
     if (monitorName) {
@@ -95,7 +103,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
           setNow(timestamp);
           setCurrentHz(hz);
           setHzHistory((prev) =>
-            prev.length === 0 ? [{ time: timestamp, hz }] : prev
+            prev.length === 0 ? [{ time: timestamp, hz }] : prev,
           );
         })
         .catch(() => undefined);
@@ -118,7 +126,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         return [...filtered, { time: timestamp, hz }];
       });
       addLog(event.payload);
-      invoke<string[]>("get_running_watched").then(setRunningProcesses).catch(() => undefined);
+      invoke<string[]>("get_running_watched")
+        .then(setRunningProcesses)
+        .catch(() => undefined);
     });
 
     const interval = setInterval(refreshStatus, 5000);
@@ -127,7 +137,7 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       void unlisten.then((fn) => fn());
       clearInterval(interval);
     };
-  }, [monitorName, refreshStatus]);
+  }, [monitorName, refreshStatus, addLog]);
 
   useEffect(() => {
     if (!monitorName) return;
@@ -145,14 +155,17 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       const name = wpName(wp);
       const iconKey = name.toLowerCase();
       if (processIcons[iconKey] || cache[iconKey]) continue;
-      invoke<string | null>("get_process_icon", { processName: name, exePath: typeof wp === "object" ? wp.path : undefined })
+      invoke<string | null>("get_process_icon", {
+        processName: name,
+        exePath: typeof wp === "object" ? wp.path : undefined,
+      })
         .then((icon) => {
           if (icon) {
             saveIconToCache(iconKey, icon);
             setProcessIcons((prev) => ({ ...prev, [iconKey]: icon }));
           }
         })
-        .catch(() => {});
+        .catch(() => undefined);
     }
   }, [watchedProcesses, processIcons]);
 
@@ -164,9 +177,10 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       const dur = pt.time - prev.time;
       return acc + (prev.hz >= threshold ? dur : 0);
     }, 0);
-    const totalMs = hzHistory.length > 1
-      ? hzHistory[hzHistory.length - 1].time - hzHistory[0].time
-      : 0;
+    const totalMs =
+      hzHistory.length > 1
+        ? hzHistory[hzHistory.length - 1].time - hzHistory[0].time
+        : 0;
     return {
       gameMinutes: Math.round(gameMs / 60000),
       standardMinutes: Math.round((totalMs - gameMs) / 60000),
@@ -200,7 +214,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         {/* Current Hz card */}
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1">
           <div className="flex items-start justify-between mb-2">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t("status.currentHz")}</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              {t("status.currentHz")}
+            </span>
             <span
               key={mode}
               className={`text-xs font-bold px-2.5 py-0.5 rounded-full badge-anim ${
@@ -209,7 +225,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                   : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
               }`}
             >
-              {mode === "GAME" ? `● ${t("status.badgeGame")}` : `● ${t("mode.standard").toUpperCase()}`}
+              {mode === "GAME"
+                ? `● ${t("status.badgeGame")}`
+                : `● ${t("mode.standard").toUpperCase()}`}
             </span>
           </div>
           <div className="flex items-baseline gap-1.5">
@@ -220,7 +238,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
               {currentHz ?? "—"}
             </span>
             {currentHz != null && (
-              <span className="text-2xl font-semibold text-slate-400 dark:text-slate-500">Hz</span>
+              <span className="text-2xl font-semibold text-slate-400 dark:text-slate-500">
+                Hz
+              </span>
             )}
           </div>
           {monitorLabel && (
@@ -231,27 +251,40 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
           <Sparkline points={hzHistory} mode={mode} now={now} />
           <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
             <span>{t("status.lastHour")}</span>
-            <span>{t("status.timeGame", { game: gameMinutes, standard: standardMinutes })}</span>
+            <span>
+              {t("status.timeGame", {
+                game: gameMinutes,
+                standard: standardMinutes,
+              })}
+            </span>
           </div>
         </div>
 
         {/* Active Processes card */}
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t("status.activeProcesses")}</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              {t("status.activeProcesses")}
+            </span>
             <span className="text-xs text-slate-400 dark:text-slate-500">
-              {t("status.runningOf", { running: runningProcesses.length, total: watchedProcesses.length })}
+              {t("status.runningOf", {
+                running: runningProcesses.length,
+                total: watchedProcesses.length,
+              })}
             </span>
           </div>
           {watchedProcesses.length === 0 ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500 italic">{t("status.noProcesses")}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 italic">
+              {t("status.noProcesses")}
+            </p>
           ) : (
             <div className="space-y-2">
               {watchedProcesses.slice(0, 5).map((wp) => {
                 const key = wpKey(wp);
                 const name = wpName(wp);
                 const iconKey = name.toLowerCase();
-                const icon = processIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
+                const icon =
+                  processIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
                 const isRunning = runningProcesses.some((r) => r === key);
                 return (
                   <div key={key} className="flex items-center gap-2.5">
@@ -265,10 +298,17 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                       }`}
                     >
                       {icon ? (
-                        <img src={icon} alt="" className="w-7 h-7 object-contain" />
+                        <img
+                          src={icon}
+                          alt=""
+                          className="w-7 h-7 object-contain"
+                        />
                       ) : (
                         <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path d="M2.5 1.5l4 2.5-4 2.5V1.5z" fill={isRunning ? "white" : "#94a3b8"} />
+                          <path
+                            d="M2.5 1.5l4 2.5-4 2.5V1.5z"
+                            fill={isRunning ? "white" : "#94a3b8"}
+                          />
                         </svg>
                       )}
                     </div>
@@ -283,7 +323,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                     </span>
                     <span
                       className={`text-xs shrink-0 font-medium ${
-                        isRunning ? "text-slate-600 dark:text-slate-300" : "text-slate-400 dark:text-slate-500"
+                        isRunning
+                          ? "text-slate-600 dark:text-slate-300"
+                          : "text-slate-400 dark:text-slate-500"
                       }`}
                     >
                       {isRunning ? t("status.running") : t("status.waiting")}
@@ -293,7 +335,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
               })}
               {watchedProcesses.length > 5 && (
                 <p className="text-xs text-slate-400 dark:text-slate-500 pl-9">
-                  {t("status.moreProcesses", { count: watchedProcesses.length - 5 })}
+                  {t("status.moreProcesses", {
+                    count: watchedProcesses.length - 5,
+                  })}
                 </p>
               )}
             </div>
@@ -304,24 +348,40 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
       {/* Today stats */}
       <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] px-5 py-4 flex items-center gap-8 anim-fade-up stagger-3">
         <div>
-          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{todaySwitches}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500 whitespace-pre-line">{t("status.switchedAuto")}</div>
+          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">
+            {todaySwitches}
+          </div>
+          <div className="text-xs text-slate-400 dark:text-slate-500 whitespace-pre-line">
+            {t("status.switchedAuto")}
+          </div>
         </div>
         <div>
-          <div className="text-2xl font-black text-red-500">{formatDuration(gameMinutes)}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">{t("status.inGameMode")}</div>
+          <div className="text-2xl font-black text-red-500">
+            {formatDuration(gameMinutes)}
+          </div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">
+            {t("status.inGameMode")}
+          </div>
         </div>
         <div>
-          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{formatDuration(standardMinutes)}</div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">{t("status.inStandard")}</div>
+          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">
+            {formatDuration(standardMinutes)}
+          </div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">
+            {t("status.inStandard")}
+          </div>
         </div>
-        <div className="ml-auto text-xs text-slate-400 dark:text-slate-500">{t("status.today")}</div>
+        <div className="ml-auto text-xs text-slate-400 dark:text-slate-500">
+          {t("status.today")}
+        </div>
       </div>
 
       {/* Event log */}
       <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-4">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t("status.eventLog")}</span>
+          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {t("status.eventLog")}
+          </span>
           <div className="flex gap-1">
             {(
               [
@@ -346,7 +406,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
         </div>
         <div className="space-y-3 min-h-20">
           {filteredLog.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500 italic">{t("status.noEvents")}</p>
+            <p className="text-sm text-slate-400 dark:text-slate-500 italic">
+              {t("status.noEvents")}
+            </p>
           ) : (
             filteredLog.map((entry, i) => (
               <div
@@ -364,7 +426,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                       : "bg-slate-400 dark:bg-slate-500"
                   }`}
                 />
-                <span className="flex-1 text-slate-700 dark:text-slate-300 truncate">{entry.message}</span>
+                <span className="flex-1 text-slate-700 dark:text-slate-300 truncate">
+                  {entry.message}
+                </span>
                 {entry.hz_from != null && entry.hz_to != null && (
                   <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 tabular-nums font-mono">
                     {entry.hz_from} → {entry.hz_to} Hz
@@ -378,7 +442,9 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
                         : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
                     }`}
                   >
-                    {entry.event_type === "process_stop" ? t("status.badgeStandby") : t("status.badgeGame")}
+                    {entry.event_type === "process_stop"
+                      ? t("status.badgeStandby")
+                      : t("status.badgeGame")}
                   </span>
                 )}
               </div>
@@ -390,7 +456,15 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   );
 }
 
-function Sparkline({ points, mode, now }: { points: HzPoint[]; mode: string; now: number }) {
+function Sparkline({
+  points,
+  mode,
+  now,
+}: {
+  points: HzPoint[];
+  mode: string;
+  now: number;
+}) {
   if (points.length < 2) return <div style={{ height: 64 }} className="mt-3" />;
 
   const W = 400;
@@ -398,7 +472,8 @@ function Sparkline({ points, mode, now }: { points: HzPoint[]; mode: string; now
   const oneHourAgo = now - 3_600_000;
 
   const inWindow = points.filter((p) => p.time >= oneHourAgo);
-  if (inWindow.length === 0) return <div style={{ height: 64 }} className="mt-3" />;
+  if (inWindow.length === 0)
+    return <div style={{ height: 64 }} className="mt-3" />;
 
   const display: HzPoint[] = [];
   if (inWindow[0].time > oneHourAgo) {
@@ -413,7 +488,8 @@ function Sparkline({ points, mode, now }: { points: HzPoint[]; mode: string; now
   const PAD = 4;
 
   const toX = (t: number) => ((t - oneHourAgo) / (now - oneHourAgo)) * W;
-  const toY = (hz: number) => H - PAD - ((hz - minHz) / hzRange) * (H - PAD * 2);
+  const toY = (hz: number) =>
+    H - PAD - ((hz - minHz) / hzRange) * (H - PAD * 2);
 
   let d = `M ${toX(display[0].time).toFixed(1)} ${toY(display[0].hz).toFixed(1)}`;
   for (let i = 1; i < display.length; i++) {

@@ -1,12 +1,19 @@
-import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MonitorHz, MonitorInfoExtended, WatchConfig } from "../types";
 import { useTheme } from "../useTheme";
 
-interface SelectOption { value: string; label: string }
+interface SelectOption {
+  value: string;
+  label: string;
+}
 
-function CustomSelect({ value, options, onChange }: {
+function CustomSelect({
+  value,
+  options,
+  onChange,
+}: {
   value: string;
   options: SelectOption[];
   onChange: (v: string) => void;
@@ -17,7 +24,8 @@ function CustomSelect({ value, options, onChange }: {
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -41,7 +49,12 @@ function CustomSelect({ value, options, onChange }: {
       >
         <span className="relative">
           <span className="invisible whitespace-nowrap" aria-hidden="true">
-            {options.reduce((a, b) => b.label.length > a.label.length ? b : a, options[0]).label}
+            {
+              options.reduce(
+                (a, b) => (b.label.length > a.label.length ? b : a),
+                options[0],
+              ).label
+            }
           </span>
           <span className="absolute inset-0 flex items-center whitespace-nowrap">
             {selected?.label ?? value}
@@ -49,39 +62,63 @@ function CustomSelect({ value, options, onChange }: {
         </span>
         <svg
           className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 shrink-0 ${open ? "rotate-180" : ""}`}
-          viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 12 12"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
         >
-          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <path
+            d="M2 4l4 4 4-4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </button>
 
       {open && (
-        <div className="
+        <div
+          className="
           absolute right-0 mt-1.5 z-50 min-w-full
           bg-white dark:bg-[#1e1e1e]
           border border-black/10 dark:border-white/8
           rounded-xl overflow-hidden
           shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.6)]
-        ">
+        "
+        >
           {options.map((opt) => {
             const isActive = opt.value === value;
             return (
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => { onChange(opt.value); setOpen(false); }}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
                 className={`
                   w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium text-left transition-colors
-                  ${isActive
-                    ? "bg-red-500/8 dark:bg-red-500/10 text-red-600 dark:text-red-400"
-                    : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                  ${
+                    isActive
+                      ? "bg-red-500/8 dark:bg-red-500/10 text-red-600 dark:text-red-400"
+                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
                   }
                 `}
               >
                 <span className="whitespace-nowrap">{opt.label}</span>
                 {isActive && (
-                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 12 12" fill="none">
-                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <svg
+                    className="w-3.5 h-3.5 shrink-0"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                  >
+                    <path
+                      d="M2 6l3 3 5-5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
                   </svg>
                 )}
               </button>
@@ -105,7 +142,11 @@ function extractDisplayNum(deviceName: string): number {
   return m ? parseInt(m[1]) : 0;
 }
 
-function getMonitorLabel(mon: MonitorInfoExtended, all: MonitorInfoExtended[], t: (k: string) => string): string {
+function getMonitorLabel(
+  mon: MonitorInfoExtended,
+  all: MonitorInfoExtended[],
+  t: (k: string) => string,
+): string {
   if (mon.is_primary) return t("monitor.labelPrimary");
   if (mon.is_duplicate) return t("monitor.labelClone");
   const secondary = all.filter((m) => !m.is_primary && !m.is_duplicate);
@@ -121,7 +162,6 @@ function getMonitorLabel(mon: MonitorInfoExtended, all: MonitorInfoExtended[], t
 const CANVAS_H = 320;
 const CANVAS_PAD = 28;
 
-
 export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const { t } = useTranslation();
   const { isDark } = useTheme();
@@ -136,7 +176,8 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const [draftDefaultHz, setDraftDefaultHz] = useState(config.default_hz);
   const [savedGameHz, setSavedGameHz] = useState(config.game_hz);
   const [savedDefaultHz, setSavedDefaultHz] = useState(config.default_hz);
-  const isDirty = draftGameHz !== savedGameHz || draftDefaultHz !== savedDefaultHz;
+  const isDirty =
+    draftGameHz !== savedGameHz || draftDefaultHz !== savedDefaultHz;
   const draftGameHzRef = useRef(draftGameHz);
   const draftDefaultHzRef = useRef(draftDefaultHz);
   const isDirtyRef = useRef(isDirty);
@@ -169,22 +210,36 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     queueMicrotask(() => {
       if (!cancelled) setLoading(true);
     });
-    void invoke<number[]>("get_supported_hz", { monitorName: config.monitor_name })
+    void invoke<number[]>("get_supported_hz", {
+      monitorName: config.monitor_name,
+    })
       .then((hz) => {
         if (cancelled) return;
         setSupportedHz(hz);
         if (hz.length === 0) return;
         if (monitorChanged || !isDirtyRef.current) {
-          const saved = config.monitor_settings[config.monitor_name] as MonitorHz | undefined;
-          const newGameHz = saved?.game_hz && hz.includes(saved.game_hz) ? saved.game_hz : hz[hz.length - 1];
-          const newDefaultHz = saved?.default_hz && hz.includes(saved.default_hz) ? saved.default_hz : (hz.includes(60) ? 60 : hz[0]);
+          const saved = config.monitor_settings[config.monitor_name] as
+            | MonitorHz
+            | undefined;
+          const newGameHz =
+            saved?.game_hz && hz.includes(saved.game_hz)
+              ? saved.game_hz
+              : hz[hz.length - 1];
+          const newDefaultHz =
+            saved?.default_hz && hz.includes(saved.default_hz)
+              ? saved.default_hz
+              : hz.includes(60)
+                ? 60
+                : hz[0];
           setDraftGameHz(newGameHz);
           setDraftDefaultHz(newDefaultHz);
           setSavedGameHz(newGameHz);
           setSavedDefaultHz(newDefaultHz);
         } else {
-          if (!hz.includes(draftGameHzRef.current)) setDraftGameHz(hz[hz.length - 1]);
-          if (!hz.includes(draftDefaultHzRef.current)) setDraftDefaultHz(hz.includes(60) ? 60 : hz[0]);
+          if (!hz.includes(draftGameHzRef.current))
+            setDraftGameHz(hz[hz.length - 1]);
+          if (!hz.includes(draftDefaultHzRef.current))
+            setDraftDefaultHz(hz.includes(60) ? 60 : hz[0]);
         }
       })
       .finally(() => {
@@ -205,7 +260,9 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   }, []);
 
   const layout = computeLayout(monitors, canvasWidth, CANVAS_H, CANVAS_PAD);
-  const configuredMonitor = monitors.find((m) => m.device_name === config.monitor_name);
+  const configuredMonitor = monitors.find(
+    (m) => m.device_name === config.monitor_name,
+  );
 
   const hzWarning =
     supportedHz.length > 0 && draftGameHz < draftDefaultHz
@@ -216,7 +273,10 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     if (!config.monitor_name) return;
     setTesting(true);
     try {
-      await invoke("test_hz", { monitorName: config.monitor_name, hz: draftGameHz });
+      await invoke("test_hz", {
+        monitorName: config.monitor_name,
+        hz: draftGameHz,
+      });
       setTimeout(() => setTesting(false), 5500);
     } catch {
       setTesting(false);
@@ -225,8 +285,15 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
 
   function handleSave() {
     const settings = { ...config.monitor_settings };
-    settings[config.monitor_name] = { game_hz: draftGameHz, default_hz: draftDefaultHz };
-    const override = { game_hz: draftGameHz, default_hz: draftDefaultHz, monitor_settings: settings };
+    settings[config.monitor_name] = {
+      game_hz: draftGameHz,
+      default_hz: draftDefaultHz,
+    };
+    const override = {
+      game_hz: draftGameHz,
+      default_hz: draftDefaultHz,
+      monitor_settings: settings,
+    };
     onChange(override);
     onSave(override);
     setSavedGameHz(draftGameHz);
@@ -235,7 +302,10 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     setTimeout(() => setSaveMsg(""), 2500);
   }
 
-  const hzButtons = supportedHz.length > 0 ? supportedHz : [60, 75, 90, 120, 144, 165, 200, 240];
+  const hzButtons =
+    supportedHz.length > 0
+      ? supportedHz
+      : [60, 75, 90, 120, 144, 165, 200, 240];
 
   return (
     <div className="space-y-4">
@@ -247,79 +317,124 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
           style={{
             height: CANVAS_H,
             backgroundColor: "transparent",
-            backgroundImage: "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
+            backgroundImage:
+              "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
             backgroundSize: "20px 20px",
           }}
         >
-          {layout.map(({ mon, left, top, w, h, displayNum, isCloneGroup, groupDeviceNames }) => {
-            const isConfigured = groupDeviceNames.includes(config.monitor_name);
-            const label = isCloneGroup ? t("monitor.labelClone") : getMonitorLabel(mon, monitors, t);
+          {layout.map(
+            ({
+              mon,
+              left,
+              top,
+              w,
+              h,
+              displayNum,
+              isCloneGroup,
+              groupDeviceNames,
+            }) => {
+              const isConfigured = groupDeviceNames.includes(
+                config.monitor_name,
+              );
+              const label = isCloneGroup
+                ? t("monitor.labelClone")
+                : getMonitorLabel(mon, monitors, t);
 
-            return (
-              <div
-                key={mon.device_name}
-                onClick={() => onChange({ monitor_name: mon.device_name })}
-                className="absolute rounded-xl cursor-pointer transition-[background-color,border-color,box-shadow] select-none flex flex-col monitor-card"
-                style={{
-                  left, top, width: w, height: h,
-                  backgroundColor: isConfigured ? "#ef4444" : isDark ? "#2a2a2a" : "white",
-                  border: `2px solid ${isConfigured ? "#dc2626" : isDark ? "#3f3f3f" : "#e2e8f0"}`,
-                  boxShadow: isConfigured
-                    ? "0 4px 24px rgba(239,68,68,0.35)"
-                    : isDark ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.07)",
-                }}
-              >
-                <div className="flex items-center justify-between px-2 pt-1.5 shrink-0">
-                  <span
-                    className="font-bold tracking-widest"
-                    style={{
-                      fontSize: Math.max(9, Math.min(12, h * 0.06)),
-                      color: isConfigured ? "rgba(255,255,255,0.8)" : isDark ? "#64748b" : "#94a3b8",
-                    }}
-                  >
-                    {label}
-                  </span>
-                  {isConfigured && (
+              return (
+                <div
+                  key={mon.device_name}
+                  onClick={() => onChange({ monitor_name: mon.device_name })}
+                  className="absolute rounded-xl cursor-pointer transition-[background-color,border-color,box-shadow] select-none flex flex-col monitor-card"
+                  style={{
+                    left,
+                    top,
+                    width: w,
+                    height: h,
+                    backgroundColor: isConfigured
+                      ? "#ef4444"
+                      : isDark
+                        ? "#2a2a2a"
+                        : "white",
+                    border: `2px solid ${isConfigured ? "#dc2626" : isDark ? "#3f3f3f" : "#e2e8f0"}`,
+                    boxShadow: isConfigured
+                      ? "0 4px 24px rgba(239,68,68,0.35)"
+                      : isDark
+                        ? "0 2px 8px rgba(0,0,0,0.4)"
+                        : "0 2px 8px rgba(0,0,0,0.07)",
+                  }}
+                >
+                  <div className="flex items-center justify-between px-2 pt-1.5 shrink-0">
                     <span
-                      className="font-bold rounded-full px-1.5 py-0.5"
-                      style={{ fontSize: 7, backgroundColor: "rgba(255,255,255,0.25)", color: "white" }}
+                      className="font-bold tracking-widest"
+                      style={{
+                        fontSize: Math.max(9, Math.min(12, h * 0.06)),
+                        color: isConfigured
+                          ? "rgba(255,255,255,0.8)"
+                          : isDark
+                            ? "#64748b"
+                            : "#94a3b8",
+                      }}
                     >
-                      {t("monitor.activeBadge")}
+                      {label}
                     </span>
-                  )}
-                </div>
+                    {isConfigured && (
+                      <span
+                        className="font-bold rounded-full px-1.5 py-0.5"
+                        style={{
+                          fontSize: 7,
+                          backgroundColor: "rgba(255,255,255,0.25)",
+                          color: "white",
+                        }}
+                      >
+                        {t("monitor.activeBadge")}
+                      </span>
+                    )}
+                  </div>
 
-                <div className="flex-1 flex items-center justify-center">
-                  <span
-                    className="font-black leading-none"
-                    style={{
-                      fontSize: Math.min(h * 0.42, isCloneGroup ? 52 : 72),
-                      color: isConfigured ? "white" : isDark ? "#cbd5e1" : "#1e293b",
-                      letterSpacing: isCloneGroup ? "-0.02em" : undefined,
-                    }}
-                  >
-                    {displayNum}
-                  </span>
-                </div>
+                  <div className="flex-1 flex items-center justify-center">
+                    <span
+                      className="font-black leading-none"
+                      style={{
+                        fontSize: Math.min(h * 0.42, isCloneGroup ? 52 : 72),
+                        color: isConfigured
+                          ? "white"
+                          : isDark
+                            ? "#cbd5e1"
+                            : "#1e293b",
+                        letterSpacing: isCloneGroup ? "-0.02em" : undefined,
+                      }}
+                    >
+                      {displayNum}
+                    </span>
+                  </div>
 
-                <div className="text-center pb-2 shrink-0">
-                  <span
-                    style={{
-                      fontSize: Math.max(9, Math.min(12, h * 0.055)),
-                      color: isConfigured ? "rgba(255,255,255,0.7)" : isDark ? "#64748b" : "#94a3b8",
-                    }}
-                  >
-                    {mon.width} × {mon.height} · {mon.max_hz}Hz
-                  </span>
+                  <div className="text-center pb-2 shrink-0">
+                    <span
+                      style={{
+                        fontSize: Math.max(9, Math.min(12, h * 0.055)),
+                        color: isConfigured
+                          ? "rgba(255,255,255,0.7)"
+                          : isDark
+                            ? "#64748b"
+                            : "#94a3b8",
+                      }}
+                    >
+                      {mon.width} × {mon.height} · {mon.max_hz}Hz
+                    </span>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            },
+          )}
         </div>
 
         <div className="flex items-center gap-3 mt-3">
           <button
-            onClick={() => void invoke("identify_monitors", { theme: isDark ? "dark" : "light" }).catch(console.error)}
+            onClick={() =>
+              void invoke("identify_monitors", {
+                theme: isDark ? "dark" : "light",
+              }).catch(console.error)
+            }
             className="px-3 py-1.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-lg text-xs font-medium
                        text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#333] transition-colors shadow-sm"
           >
@@ -336,16 +451,28 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center text-white font-bold shrink-0 shadow-sm shadow-red-500/30"
-                style={{ fontSize: layout.find((l) => l.groupDeviceNames.includes(config.monitor_name))?.isCloneGroup ? 10 : 14 }}>
-                {layout.find((l) => l.groupDeviceNames.includes(config.monitor_name))?.displayNum ?? extractDisplayNum(configuredMonitor.device_name)}
+              <div
+                className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center text-white font-bold shrink-0 shadow-sm shadow-red-500/30"
+                style={{
+                  fontSize: layout.find((l) =>
+                    l.groupDeviceNames.includes(config.monitor_name),
+                  )?.isCloneGroup
+                    ? 10
+                    : 14,
+                }}
+              >
+                {layout.find((l) =>
+                  l.groupDeviceNames.includes(config.monitor_name),
+                )?.displayNum ??
+                  extractDisplayNum(configuredMonitor.device_name)}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
                   {configuredMonitor.friendly_name}
                 </div>
                 <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate select-text">
-                  {configuredMonitor.width} × {configuredMonitor.height} · {t("monitor.upTo", { hz: configuredMonitor.max_hz })}
+                  {configuredMonitor.width} × {configuredMonitor.height} ·{" "}
+                  {t("monitor.upTo", { hz: configuredMonitor.max_hz })}
                 </div>
               </div>
             </div>
@@ -368,8 +495,12 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         <div>
           <div className="flex items-center gap-2 mb-3">
             <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t("monitor.gameHz")}</span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">{t("monitor.gameHzHint")}</span>
+            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {t("monitor.gameHz")}
+            </span>
+            <span className="text-xs text-slate-400 dark:text-slate-500">
+              {t("monitor.gameHzHint")}
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             {hzButtons.map((hz) => (
@@ -394,8 +525,12 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         <div>
           <div className="flex items-center gap-2 mb-3">
             <span className="w-2.5 h-2.5 rounded-full bg-slate-400 dark:bg-slate-500 shrink-0" />
-            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t("monitor.defaultHz")}</span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">{t("monitor.defaultHzHint")}</span>
+            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {t("monitor.defaultHz")}
+            </span>
+            <span className="text-xs text-slate-400 dark:text-slate-500">
+              {t("monitor.defaultHzHint")}
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             {hzButtons.map((hz) => (
@@ -425,7 +560,11 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
       {/* Actions */}
       <div className="sticky bottom-5 flex justify-end">
         <div className="flex items-center gap-2 bg-white dark:bg-[#1c1c1c] border border-black/8 dark:border-white/8 rounded-2xl shadow-lg px-2 py-2">
-          {saveMsg && <span className="text-xs text-slate-500 dark:text-slate-400 font-medium px-1">{saveMsg}</span>}
+          {saveMsg && (
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
+              {saveMsg}
+            </span>
+          )}
           <button
             onClick={() => void handleTestHz()}
             disabled={testing || !config.monitor_name || !isDirty}
@@ -463,11 +602,12 @@ function computeLayout(
   monitors: MonitorInfoExtended[],
   canvasW: number,
   canvasH: number,
-  pad: number
+  pad: number,
 ): LayoutItem[] {
   if (monitors.length === 0) return [];
 
-  const posKey = (m: MonitorInfoExtended) => `${m.x},${m.y},${m.width},${m.height}`;
+  const posKey = (m: MonitorInfoExtended) =>
+    `${m.x},${m.y},${m.width},${m.height}`;
   const seen = new Set<string>();
   const groups: MonitorInfoExtended[][] = [];
   for (const mon of monitors) {

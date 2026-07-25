@@ -7,7 +7,9 @@
   user-select: none;
 }
 
-input, textarea, .select-text {
+input,
+textarea,
+.select-text {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -55,8 +57,14 @@ body {
 
 /* ── Monitor card pop (existing, improved) ────────────── */
 @keyframes monitor-pop {
-  from { transform: scale(0.85); opacity: 0; }
-  to   { transform: scale(1);    opacity: 1; }
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .monitor-card {
@@ -66,8 +74,14 @@ body {
 
 /* ── Fade-slide in (used for cards, log entries) ──────── */
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .anim-fade-up {
@@ -75,16 +89,32 @@ body {
 }
 
 /* ── Stagger delays for list items ────────────────────── */
-.stagger-1  { animation-delay: 0ms;  }
-.stagger-2  { animation-delay: 40ms; }
-.stagger-3  { animation-delay: 80ms; }
-.stagger-4  { animation-delay: 120ms;}
-.stagger-5  { animation-delay: 160ms;}
+.stagger-1 {
+  animation-delay: 0ms;
+}
+.stagger-2 {
+  animation-delay: 40ms;
+}
+.stagger-3 {
+  animation-delay: 80ms;
+}
+.stagger-4 {
+  animation-delay: 120ms;
+}
+.stagger-5 {
+  animation-delay: 160ms;
+}
 
 /* ── Log entry entrance ───────────────────────────────── */
 @keyframes log-in {
-  from { opacity: 0; transform: translateX(-6px); }
-  to   { opacity: 1; transform: translateX(0);    }
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .log-entry {
@@ -93,9 +123,15 @@ body {
 
 /* ── Hz number pulse on change ────────────────────────── */
 @keyframes hz-pop {
-  0%   { transform: scale(1);    }
-  40%  { transform: scale(1.08); }
-  100% { transform: scale(1);    }
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .hz-pop {
@@ -104,8 +140,14 @@ body {
 
 /* ── Mode badge fade ──────────────────────────────────── */
 @keyframes badge-in {
-  from { opacity: 0; transform: scale(0.85); }
-  to   { opacity: 1; transform: scale(1);    }
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .badge-anim {
@@ -114,8 +156,15 @@ body {
 
 /* ── Pulsing dot for GAME mode ────────────────────────── */
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1;   transform: scale(1);    }
-  50%       { opacity: 0.5; transform: scale(0.75); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.75);
+  }
 }
 
 .dot-pulse {
@@ -124,7 +173,9 @@ body {
 
 /* ── Button press feedback ────────────────────────────── */
 .btn-press {
-  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out);
+  transition:
+    transform 140ms var(--ease-out),
+    opacity 140ms var(--ease-out);
 }
 
 .btn-press:active {
@@ -134,8 +185,14 @@ body {
 
 /* ── Process row entrance ─────────────────────────────── */
 @keyframes row-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .process-row {
@@ -144,8 +201,14 @@ body {
 
 /* ── Process row removal ──────────────────────────────── */
 @keyframes row-out {
-  0%   { opacity: 1; transform: translateX(0)    scale(1);    }
-  100% { opacity: 0; transform: translateX(24px) scale(0.97); }
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(24px) scale(0.97);
+  }
 }
 
 .process-row-removing {
@@ -155,8 +218,14 @@ body {
 
 /* ── Tab content fade ─────────────────────────────────── */
 @keyframes tab-fade {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .tab-content {
@@ -165,8 +234,14 @@ body {
 
 /* ── Picker dropdown entrance ─────────────────────────── */
 @keyframes dropdown-in {
-  from { opacity: 0; transform: scale(0.95) translateY(-4px); }
-  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .dropdown-anim {

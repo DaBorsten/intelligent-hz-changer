@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
-import { Settings } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Settings } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ProcessList } from "./components/ProcessList";
 import { MonitorConfig } from "./components/MonitorConfig";
-import { StatusView } from "./components/StatusView";
+import { ProcessList } from "./components/ProcessList";
 import { SettingsTab } from "./components/SettingsTab";
-import type { WatchConfig, HzChangedPayload } from "./types";
+import { StatusView } from "./components/StatusView";
+import type { HzChangedPayload, WatchConfig } from "./types";
 
 type Tab = "status" | "processes" | "monitor" | "settings";
 
@@ -36,9 +36,33 @@ function PulseIcon({ active }: { active?: boolean }) {
 function ListIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <line x1="1.5" y1="4" x2="13.5" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <line x1="1.5" y1="7.5" x2="13.5" y2="7.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <line x1="1.5" y1="11" x2="9" y2="11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <line
+        x1="1.5"
+        y1="4"
+        x2="13.5"
+        y2="4"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <line
+        x1="1.5"
+        y1="7.5"
+        x2="13.5"
+        y2="7.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <line
+        x1="1.5"
+        y1="11"
+        x2="9"
+        y2="11"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -46,8 +70,21 @@ function ListIcon() {
 function MonitorIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <rect x="1" y="2" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M5 13h5M7.5 11v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <rect
+        x="1"
+        y="2"
+        width="13"
+        height="9"
+        rx="1.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M5 13h5M7.5 11v2"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -71,7 +108,10 @@ function Toggle({
       className={`relative inline-flex items-center w-11 h-6 rounded-full shrink-0 btn-press ${
         checked ? "bg-red-500" : "bg-slate-300 dark:bg-slate-600"
       }`}
-      style={{ transition: "background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)" }}
+      style={{
+        transition:
+          "background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)",
+      }}
     >
       <span
         className="inline-block w-4 h-4 bg-white rounded-full shadow"
@@ -101,20 +141,20 @@ export default function App() {
         if (cfg.monitor_name) {
           invoke<number>("get_current_hz", { monitorName: cfg.monitor_name })
             .then(setHeaderHz)
-            .catch(() => {});
+            .catch(() => undefined);
         }
       })
       .catch(console.error);
 
     invoke<boolean>("get_enabled")
       .then(setActive)
-      .catch(() => {});
+      .catch(() => undefined);
 
     invoke<string[]>("get_running_watched")
       .then((running) => {
         if (running.length > 0) setHeaderMode("game");
       })
-      .catch(() => {});
+      .catch(() => undefined);
 
     const unlistenHz = listen<HzChangedPayload>("hz-changed", (e) => {
       setHeaderHz(e.payload.current_hz);
@@ -127,8 +167,10 @@ export default function App() {
         // reconcile has run by now, so trust the running set as source of truth.
         // A game already at target Hz fires no process_start event.
         invoke<string[]>("get_running_watched")
-          .then((running) => setHeaderMode(running.length > 0 ? "game" : "standard"))
-          .catch(() => {});
+          .then((running) =>
+            setHeaderMode(running.length > 0 ? "game" : "standard"),
+          )
+          .catch(() => undefined);
       }
     });
 
@@ -149,7 +191,7 @@ export default function App() {
     const poll = () =>
       invoke<number>("get_current_hz", { monitorName: config.monitor_name })
         .then(setHeaderHz)
-        .catch(() => {});
+        .catch(() => undefined);
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
   }, [config.monitor_name]);
@@ -178,7 +220,11 @@ export default function App() {
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "status", label: t("tabs.status"), icon: <PulseIcon active={tab === "status"} /> },
+    {
+      id: "status",
+      label: t("tabs.status"),
+      icon: <PulseIcon active={tab === "status"} />,
+    },
     { id: "processes", label: t("tabs.processes"), icon: <ListIcon /> },
     { id: "monitor", label: t("tabs.monitor"), icon: <MonitorIcon /> },
     { id: "settings", label: t("tabs.settings"), icon: <SettingsIcon /> },
@@ -189,7 +235,11 @@ export default function App() {
       {/* Header */}
       <header className="bg-white dark:bg-[#1c1c1c] border-b border-black/8 dark:border-white/8 px-5 py-3.5 flex items-center gap-3 shrink-0">
         <div className="w-10 h-10 shrink-0 flex items-center justify-center">
-          <img src="/intelligent-hz-changer.svg" alt="Logo" className="w-10 h-10" />
+          <img
+            src="/intelligent-hz-changer.svg"
+            alt="Logo"
+            className="w-10 h-10"
+          />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight">
@@ -225,7 +275,10 @@ export default function App() {
                   ? "bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-slate-100 border-black/8 dark:border-white/8 border-b-white dark:border-b-[#1c1c1c]"
                   : "text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200"
               }`}
-              style={{ transition: "color 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)" }}
+              style={{
+                transition:
+                  "color 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)",
+              }}
             >
               {t.icon}
               {t.label}
@@ -244,7 +297,10 @@ export default function App() {
             {t(headerMode === "game" ? "mode.game" : "mode.standard")}
           </span>
           {headerHz != null && (
-            <span key={headerHz} className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5 badge-anim">
+            <span
+              key={headerHz}
+              className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5 badge-anim"
+            >
               {headerHz} Hz
             </span>
           )}

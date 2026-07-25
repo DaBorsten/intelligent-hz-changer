@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ThemeContext, type Theme } from "./theme";
+import { useEffect, useState } from "react";
+import { type Theme, ThemeContext } from "./theme";
 
 function applyTauriTheme(theme: Theme) {
-  invoke("set_window_theme", { theme }).catch(() => {});
+  invoke("set_window_theme", { theme }).catch(() => undefined);
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -15,7 +15,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [systemDark, setSystemDark] = useState(
-    () => window.matchMedia("(prefers-color-scheme: dark)").matches
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
 
   useEffect(() => {
