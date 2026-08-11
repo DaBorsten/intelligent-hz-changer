@@ -141,20 +141,26 @@ fn save_config(
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(config_dir.join("config.json"), json).map_err(|e| e.to_string())?;
 
-    let should_reset = state.watch_state.update_config(config);
-    if should_reset && state.watch_state.is_enabled() {
-        watcher::sync_hz(
-            &state.watch_state,
-            &app,
-            "Prozess aus Liste entfernt (kein aktiver Prozess mehr)".into(),
-            None,
-            "process_stop",
-        );
-    }
+    state.watch_state.update_config(config);
+
     // A process just added to the list may already be running — no WMI creation
     // event will ever fire for it, so reconcile the running set once now.
     #[cfg(windows)]
     watcher::reconcile(&state.watch_state, &app);
+
+    // Apply the (possibly changed) Hz values right away: sync_hz picks game or
+    // default based on the current running set, so editing either one takes
+    // effect immediately for whichever mode is active.
+    if state.watch_state.is_enabled() {
+        let running = state.watch_state.is_any_running();
+        watcher::sync_hz(
+            &state.watch_state,
+            &app,
+            "Konfiguration gespeichert".into(),
+            None,
+            if running { "process_start" } else { "process_stop" },
+        );
+    }
     Ok(())
 }
 

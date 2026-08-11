@@ -15,6 +15,7 @@ interface Props {
   monitorName: string;
   watchedProcesses: WatchedProcess[];
   gameHz?: number;
+  active: boolean;
 }
 
 let logIdCounter = 0;
@@ -48,7 +49,12 @@ function saveIconToCache(name: string, icon: string) {
   }
 }
 
-export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
+export function StatusView({
+  monitorName,
+  watchedProcesses,
+  gameHz,
+  active,
+}: Props) {
   const { t, i18n } = useTranslation();
   const [currentHz, setCurrentHz] = useState<number | null>(null);
   const [monitorLabel, setMonitorLabel] = useState<string>("");
@@ -66,7 +72,8 @@ export function StatusView({ monitorName, watchedProcesses, gameHz }: Props) {
   // ponytail: mode is derived from the running set (source of truth), not the
   // hz-changed event — a game already at target Hz on startup fires no event.
   const mode: "STANDARD" | "GAME" =
-    runningProcesses.length > 0 ? "GAME" : "STANDARD";
+    // ponytail: disabled means we change nothing, so the badge stays STANDARD.
+    active && runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
   const addLog = useCallback(
     (payload: HzChangedPayload) => {

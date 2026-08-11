@@ -288,13 +288,13 @@ export default function App() {
         {/* Hz status pill */}
         <div className="flex items-center gap-1.5 pb-1">
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${headerMode === "game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
+            className={`w-2 h-2 rounded-full shrink-0 ${active && headerMode === "game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
           />
           <span
-            key={headerMode}
+            key={`${active}-${headerMode}`}
             className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap badge-anim"
           >
-            {t(headerMode === "game" ? "mode.game" : "mode.standard")}
+            {t(active && headerMode === "game" ? "mode.game" : "mode.standard")}
           </span>
           {headerHz != null && (
             <span
@@ -316,6 +316,7 @@ export default function App() {
                 monitorName={config.monitor_name}
                 watchedProcesses={config.watched_processes}
                 gameHz={config.game_hz}
+                active={active}
               />
             )}
             {tab === "processes" && (
