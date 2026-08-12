@@ -35,35 +35,56 @@ impl Default for AppSettings {
     }
 }
 
-const APPROVED_KEY: &str =
-    "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
-
+/// Writes the StartupApproved\Run entry Task Manager reads to show the
+/// enabled/disabled state. Uses the registry API directly rather than spawning
+/// `reg.exe` — no process spawn, no console flash, and no shell quoting to get
+/// wrong.
 #[cfg(windows)]
 fn set_startup_approved(app_name: &str, enable: bool) {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_SET_VALUE, REG_BINARY, REG_OPTION_NON_VOLATILE,
+    };
 
-    if enable {
-        // 02 00 00 00 00 00 00 00 00 00 00 00 = enabled
-        let _ = Command::new("reg")
-            .args([
-                "add",
-                APPROVED_KEY,
-                "/v",
-                app_name,
-                "/t",
-                "REG_BINARY",
-                "/d",
-                "02000000000000000000000000",
-                "/f",
-            ])
-            .creation_flags(0x08000000)
-            .output();
-    } else {
-        let _ = Command::new("reg")
-            .args(["delete", APPROVED_KEY, "/v", app_name, "/f"])
-            .creation_flags(0x08000000)
-            .output();
+    let approved_path =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\0";
+    let approved_path_w: Vec<u16> = approved_path.encode_utf16().collect();
+    let name_w: Vec<u16> = format!("{}\0", app_name).encode_utf16().collect();
+
+    unsafe {
+        // The key may not exist yet on a clean profile, so create-or-open.
+        let mut hkey = HKEY::default();
+        let res = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(approved_path_w.as_ptr()),
+            0,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut hkey,
+            None,
+        );
+        if res.is_err() {
+            return;
+        }
+
+        if enable {
+            // First byte 0x02 = enabled (0x03 = disabled by Task Manager);
+            // the remaining 11 bytes are a timestamp Windows tolerates as zero.
+            let data: [u8; 12] = [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let _ = RegSetValueExW(
+                hkey,
+                PCWSTR(name_w.as_ptr()),
+                0,
+                REG_BINARY,
+                Some(&data),
+            );
+        } else {
+            let _ = RegDeleteValueW(hkey, PCWSTR(name_w.as_ptr()));
+        }
+        let _ = RegCloseKey(hkey);
     }
 }
 

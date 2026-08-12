@@ -1,13 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Settings } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MonitorConfig } from "./components/MonitorConfig";
 import { ProcessList } from "./components/ProcessList";
 import { SettingsTab } from "./components/SettingsTab";
 import { StatusView } from "./components/StatusView";
-import type { HzChangedPayload, WatchConfig } from "./types";
+import type { WatchConfig } from "./types";
+import { useHzStatus } from "./useHzStatus";
 
 type Tab = "status" | "processes" | "monitor" | "settings";
 
@@ -131,80 +132,40 @@ export default function App() {
   const [config, setConfig] = useState<WatchConfig>(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);
   const [active, setActive] = useState(true);
-  const [headerHz, setHeaderHz] = useState<number | null>(null);
-  const [headerMode, setHeaderMode] = useState<"standard" | "game">("standard");
+
+  // Single source of truth for Hz + running set, shared with StatusView so the
+  // header pill and the status badge can never disagree.
+  const { currentHz: headerHz, running } = useHzStatus(config.monitor_name);
+  const gameMode = active && running.length > 0;
 
   useEffect(() => {
-    invoke<WatchConfig>("load_config")
-      .then((cfg) => {
-        setConfig(cfg);
-        if (cfg.monitor_name) {
-          invoke<number>("get_current_hz", { monitorName: cfg.monitor_name })
-            .then(setHeaderHz)
-            .catch(() => undefined);
-        }
-      })
-      .catch(console.error);
+    invoke<WatchConfig>("load_config").then(setConfig).catch(console.error);
 
     invoke<boolean>("get_enabled")
       .then(setActive)
       .catch(() => undefined);
-
-    invoke<string[]>("get_running_watched")
-      .then((running) => {
-        if (running.length > 0) setHeaderMode("game");
-      })
-      .catch(() => undefined);
-
-    const unlistenHz = listen<HzChangedPayload>("hz-changed", (e) => {
-      setHeaderHz(e.payload.current_hz);
-      if (e.payload.event_type === "process_start") {
-        setHeaderMode("game");
-      } else if (e.payload.event_type === "process_stop") {
-        setHeaderMode("standard");
-      } else {
-        // system event (e.g. the ~600ms startup ping): don't clobber the mode —
-        // reconcile has run by now, so trust the running set as source of truth.
-        // A game already at target Hz fires no process_start event.
-        invoke<string[]>("get_running_watched")
-          .then((running) =>
-            setHeaderMode(running.length > 0 ? "game" : "standard"),
-          )
-          .catch(() => undefined);
-      }
-    });
 
     const unlistenEnabled = listen<boolean>("enabled-changed", (e) => {
       setActive(e.payload);
     });
 
     return () => {
-      void unlistenHz.then((fn) => fn());
       void unlistenEnabled.then((fn) => fn());
     };
   }, []);
 
-  // Poll current Hz so the header reflects manual changes made in Windows,
-  // which fire no hz-changed event. Matches StatusView's 5s cadence.
-  useEffect(() => {
-    if (!config.monitor_name) return;
-    const poll = () =>
-      invoke<number>("get_current_hz", { monitorName: config.monitor_name })
-        .then(setHeaderHz)
-        .catch(() => undefined);
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
-  }, [config.monitor_name]);
-
-  function patchConfig(partial: Partial<WatchConfig>, autoSave?: boolean) {
-    setConfig((prev) => ({ ...prev, ...partial }));
-    if (autoSave) void save(partial);
-  }
-
-  async function save(overrideConfig?: Partial<WatchConfig>) {
+  const save = useCallback(async (overrideConfig?: Partial<WatchConfig>) => {
     setSaving(true);
-    const merged = { ...config, ...overrideConfig };
     try {
+      // Read from the state setter so a save can never persist a stale
+      // snapshot captured when this callback was created.
+      const merged = await new Promise<WatchConfig>((resolve) => {
+        setConfig((prev) => {
+          const next = { ...prev, ...overrideConfig };
+          resolve(next);
+          return prev;
+        });
+      });
       await invoke("save_config", {
         watchedProcesses: merged.watched_processes,
         monitorName: merged.monitor_name,
@@ -217,7 +178,17 @@ export default function App() {
     } finally {
       setSaving(false);
     }
-  }
+  }, []);
+
+  // Stable identity: MonitorConfig takes this as an effect dependency, and a new
+  // reference each render would re-run a COM/WMI monitor enumeration every time.
+  const patchConfig = useCallback(
+    (partial: Partial<WatchConfig>, autoSave?: boolean) => {
+      setConfig((prev) => ({ ...prev, ...partial }));
+      if (autoSave) void save(partial);
+    },
+    [save],
+  );
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
@@ -288,13 +259,13 @@ export default function App() {
         {/* Hz status pill */}
         <div className="flex items-center gap-1.5 pb-1">
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${active && headerMode === "game" ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
+            className={`w-2 h-2 rounded-full shrink-0 ${gameMode ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
           />
           <span
-            key={`${active}-${headerMode}`}
+            key={String(gameMode)}
             className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap badge-anim"
           >
-            {t(active && headerMode === "game" ? "mode.game" : "mode.standard")}
+            {t(gameMode ? "mode.game" : "mode.standard")}
           </span>
           {headerHz != null && (
             <span

@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   HzChangedPayload,
@@ -10,6 +9,7 @@ import type {
   WatchedProcess,
 } from "../types";
 import { wpKey, wpName } from "../types";
+import { useHzStatus } from "../useHzStatus";
 
 interface Props {
   monitorName: string;
@@ -56,9 +56,12 @@ export function StatusView({
   active,
 }: Props) {
   const { t, i18n } = useTranslation();
-  const [currentHz, setCurrentHz] = useState<number | null>(null);
+  const {
+    currentHz,
+    running: runningProcesses,
+    lastEvent,
+  } = useHzStatus(monitorName);
   const [monitorLabel, setMonitorLabel] = useState<string>("");
-  const [runningProcesses, setRunningProcesses] = useState<string[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | "hz" | "process">("all");
   const [hzHistory, setHzHistory] = useState<HzPoint[]>([]);
@@ -71,80 +74,70 @@ export function StatusView({
 
   // ponytail: mode is derived from the running set (source of truth), not the
   // hz-changed event — a game already at target Hz on startup fires no event.
+  // Same expression the header pill uses, off the same shared store.
   const mode: "STANDARD" | "GAME" =
     // ponytail: disabled means we change nothing, so the badge stays STANDARD.
     active && runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
-  const addLog = useCallback(
-    (payload: HzChangedPayload) => {
-      const timestamp = new Date().toLocaleTimeString(i18n.language, {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      setLog((prev) =>
-        [
-          {
-            id: ++logIdCounter,
-            timestamp,
-            message: payload.reason,
-            hz_from: payload.hz_from,
-            hz_to: payload.hz_to,
-            process_name: payload.process_name,
-            event_type: payload.event_type ?? "system",
-          } as LogEntry,
-          ...prev,
-        ].slice(0, 50),
-      );
-      if (payload.event_type !== "system") {
-        setTodaySwitches((n) => n + 1);
-      }
-    },
-    [i18n.language],
-  );
+  // The store outlives this component, so on a remount `lastEvent` still holds
+  // the event logged before unmount. Seeding the ref with whatever is current at
+  // mount makes the first effect run a no-op and keeps tab switches from
+  // re-logging it and re-counting the switch.
+  const loggedEvent = useRef<HzChangedPayload | null>(lastEvent);
 
-  const refreshStatus = useCallback(() => {
-    if (monitorName) {
-      invoke<number>("get_current_hz", { monitorName })
-        .then((hz) => {
-          const timestamp = Date.now();
-          setNow(timestamp);
-          setCurrentHz(hz);
-          setHzHistory((prev) =>
-            prev.length === 0 ? [{ time: timestamp, hz }] : prev,
-          );
-        })
-        .catch(() => undefined);
-    }
-    invoke<string[]>("get_running_watched")
-      .then(setRunningProcesses)
-      .catch(() => undefined);
-  }, [monitorName]);
-
+  // Append one log entry per hz-changed event. Keyed on the event object, which
+  // the store replaces only when a new event arrives — a language switch
+  // re-renders without re-logging or dropping the subscription.
   useEffect(() => {
-    refreshStatus();
-
-    const unlisten = listen<HzChangedPayload>("hz-changed", (event) => {
-      const hz = event.payload.current_hz;
-      const timestamp = Date.now();
-      setNow(timestamp);
-      setCurrentHz(hz);
-      setHzHistory((prev) => {
-        const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
-        return [...filtered, { time: timestamp, hz }];
-      });
-      addLog(event.payload);
-      invoke<string[]>("get_running_watched")
-        .then(setRunningProcesses)
-        .catch(() => undefined);
+    if (!lastEvent || lastEvent === loggedEvent.current) return;
+    loggedEvent.current = lastEvent;
+    const timestamp = new Date().toLocaleTimeString(i18n.language, {
+      hour: "2-digit",
+      minute: "2-digit",
     });
+    setLog((prev) =>
+      [
+        {
+          id: ++logIdCounter,
+          timestamp,
+          message: lastEvent.reason,
+          hz_from: lastEvent.hz_from,
+          hz_to: lastEvent.hz_to,
+          process_name: lastEvent.process_name,
+          event_type: lastEvent.event_type ?? "system",
+        } as LogEntry,
+        ...prev,
+      ].slice(0, 50),
+    );
+    // Only real process edges count as an automatic switch; "system" covers the
+    // startup ping, pause/resume and config saves.
+    if (lastEvent.event_type && lastEvent.event_type !== "system") {
+      setTodaySwitches((n) => n + 1);
+    }
+    // i18n.language can stay a dependency: the ref guard above makes a re-run
+    // for anything but a genuinely new event a no-op.
+  }, [lastEvent, i18n.language]);
 
-    const interval = setInterval(refreshStatus, 5000);
+  // Track Hz over time for the sparkline, trimmed to the displayed hour.
+  useEffect(() => {
+    if (currentHz == null) return;
+    const timestamp = Date.now();
+    setNow(timestamp);
+    setHzHistory((prev) => {
+      const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
+      const last = filtered[filtered.length - 1];
+      // The 5 s poll re-reports an unchanged rate; only the newest sample needs
+      // to move so the line extends to "now" without unbounded growth.
+      if (last && last.hz === currentHz) return filtered;
+      return [...filtered, { time: timestamp, hz: currentHz }];
+    });
+  }, [currentHz]);
 
-    return () => {
-      void unlisten.then((fn) => fn());
-      clearInterval(interval);
-    };
-  }, [monitorName, refreshStatus, addLog]);
+  // Keep the sparkline's right edge moving even while Hz holds steady.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!monitorName) return;
@@ -156,12 +149,21 @@ export function StatusView({
       .catch(() => setMonitorLabel(monitorName));
   }, [monitorName]);
 
+  // Icons already requested this session, so a re-render never re-invokes for
+  // the same process. A ref rather than state: this must not itself re-trigger
+  // the effect that writes it.
+  const requestedIcons = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    const cache = loadIconCache();
     for (const wp of watchedProcesses) {
       const name = wpName(wp);
       const iconKey = name.toLowerCase();
-      if (processIcons[iconKey] || cache[iconKey]) continue;
+      // processIcons is seeded from the localStorage cache at mount, so a
+      // cached icon must short-circuit here too — requestedIcons is empty on
+      // every mount and would otherwise re-invoke on each tab switch.
+      if (requestedIcons.current.has(iconKey) || processIcons[iconKey])
+        continue;
+      requestedIcons.current.add(iconKey);
       invoke<string | null>("get_process_icon", {
         processName: name,
         exePath: typeof wp === "object" ? wp.path : undefined,
@@ -170,10 +172,19 @@ export function StatusView({
           if (icon) {
             saveIconToCache(iconKey, icon);
             setProcessIcons((prev) => ({ ...prev, [iconKey]: icon }));
+          } else {
+            // No icon yet — the process isn't running, so its exe path is
+            // unresolvable. Unmark so a later attempt can succeed.
+            requestedIcons.current.delete(iconKey);
           }
         })
-        .catch(() => undefined);
+        .catch(() => {
+          // Allow a retry on the next config change.
+          requestedIcons.current.delete(iconKey);
+        });
     }
+    // processIcons re-runs this on each resolved icon, but every already-known
+    // key short-circuits above, so it settles instead of looping.
   }, [watchedProcesses, processIcons]);
 
   const { gameMinutes, standardMinutes } = useMemo(() => {
@@ -290,8 +301,9 @@ export function StatusView({
                 const key = wpKey(wp);
                 const name = wpName(wp);
                 const iconKey = name.toLowerCase();
-                const icon =
-                  processIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
+                // processIcons is seeded from the cache at mount, so no
+                // localStorage read is needed per row per render.
+                const icon = processIcons[iconKey] ?? null;
                 const isRunning = runningProcesses.some((r) => r === key);
                 return (
                   <div key={key} className="flex items-center gap-2.5">

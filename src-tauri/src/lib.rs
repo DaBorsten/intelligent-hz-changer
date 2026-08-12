@@ -7,6 +7,7 @@ mod settings;
 mod watcher;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::tray::TrayIconId;
 use tauri::{Emitter, Manager, Theme, WindowEvent};
@@ -14,6 +15,21 @@ use tauri_plugin_notification::NotificationExt;
 
 use display::MonitorInfoExtended;
 use process_watcher::{WatchConfig, WatchState, WatchedProcess};
+
+/// Bumped by every `save_config`. The spawned apply-thread compares against it
+/// after its slow reconcile so only the newest save touches the refresh rate.
+static SAVE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Claims the next save generation for the calling save.
+fn claim_save_generation() -> u64 {
+    SAVE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// True if `generation` is still the newest claimed save. A thread whose save
+/// has been superseded must not apply its now-stale Hz.
+fn is_newest_save(generation: u64) -> bool {
+    SAVE_GENERATION.load(Ordering::SeqCst) == generation
+}
 
 struct AppState {
     watch_state: Arc<WatchState>,
@@ -85,6 +101,13 @@ fn test_hz(
             return;
         }
         let _guard = ws.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Only undo our own change: if the monitor is no longer at the rate this
+        // test applied, someone else (the user in Windows display settings, or
+        // another app) set it since, and restoring the pre-test value would
+        // silently clobber that.
+        if display::get_current_refresh_rate(&mn) != hz {
+            return;
+        }
         let _ = display::set_refresh_rate(&mn, current);
     });
     Ok(())
@@ -145,20 +168,46 @@ fn save_config(
 
     // A process just added to the list may already be running — no WMI creation
     // event will ever fire for it, so reconcile the running set once now.
+    // Off the IPC thread: a full WMI process enumeration takes 100–500 ms and
+    // would otherwise block the command (and with it the UI's await).
     #[cfg(windows)]
-    watcher::reconcile(&state.watch_state, &app);
-
-    // Apply the (possibly changed) Hz values right away: sync_hz picks game or
-    // default based on the current running set, so editing either one takes
-    // effect immediately for whichever mode is active.
+    {
+        let ws = Arc::clone(&state.watch_state);
+        let app_c = app.clone();
+        // Two saves in quick succession spawn two threads that race for
+        // `hz_lock` in arbitrary order, so the older config's Hz could win and
+        // clobber the newer one. Each save claims a generation; a thread that is
+        // no longer the newest bails out instead of applying a stale value.
+        let generation = claim_save_generation();
+        std::thread::spawn(move || {
+            watcher::reconcile(&ws, &app_c);
+            if !is_newest_save(generation) {
+                return;
+            }
+            // Apply the (possibly changed) Hz values: sync_hz picks game or
+            // default from the running set *after* reconcile, so editing either
+            // value takes effect immediately for whichever mode is active.
+            // event_type "system" — no process actually started or stopped here,
+            // so this must not be counted as an automatic switch by the UI.
+            if ws.is_enabled() {
+                watcher::sync_hz(
+                    &ws,
+                    &app_c,
+                    "Konfiguration gespeichert".into(),
+                    None,
+                    "system",
+                );
+            }
+        });
+    }
+    #[cfg(not(windows))]
     if state.watch_state.is_enabled() {
-        let running = state.watch_state.is_any_running();
         watcher::sync_hz(
             &state.watch_state,
             &app,
             "Konfiguration gespeichert".into(),
             None,
-            if running { "process_start" } else { "process_stop" },
+            "system",
         );
     }
     Ok(())
@@ -338,10 +387,12 @@ async fn get_process_icon(process_name: String, exe_path: Option<String>) -> Opt
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         {
-            // Use the provided path directly (elevated processes like Fortnite/Vanguard
-            // return null ExecutablePath from WMI, so find_exe_path fails for them).
+            // Prefer the provided path (elevated processes like Fortnite/Vanguard
+            // return null ExecutablePath from WMI, so find_exe_path fails for
+            // them), but only if it belongs to a real running process — the path
+            // comes from the renderer and is otherwise unvalidated.
             let path = exe_path
-                .filter(|p| !p.is_empty())
+                .filter(|p| !p.is_empty() && is_known_process_path(p))
                 .or_else(|| find_exe_path(&process_name))?;
             process_icon::extract_icon_base64(&path)
         }
@@ -442,12 +493,40 @@ async fn get_running_processes_with_paths() -> Vec<RunningProcess> {
     .unwrap_or_default()
 }
 
+/// Cached process snapshot for icon lookups. Resolving N icons on a tab render
+/// would otherwise run N full WMI enumerations (~100–500 ms each); process
+/// paths barely change, so a short TTL collapses a burst into one query.
+/// (process name, executable path) pairs as returned by `query_processes`.
+#[cfg(windows)]
+type ProcSnapshot = Vec<(String, Option<String>)>;
+#[cfg(windows)]
+static PROC_SNAPSHOT: std::sync::Mutex<Option<(std::time::Instant, ProcSnapshot)>> =
+    std::sync::Mutex::new(None);
+#[cfg(windows)]
+const PROC_SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[cfg(windows)]
+fn query_processes_cached() -> ProcSnapshot {
+    if let Ok(guard) = PROC_SNAPSHOT.lock() {
+        if let Some((ts, cached)) = guard.as_ref() {
+            if ts.elapsed() < PROC_SNAPSHOT_TTL {
+                return cached.clone();
+            }
+        }
+    }
+    let fresh = query_processes();
+    if let Ok(mut guard) = PROC_SNAPSHOT.lock() {
+        *guard = Some((std::time::Instant::now(), fresh.clone()));
+    }
+    fresh
+}
+
 /// Resolves a process name to its executable path via WMI.
 /// `ExecutablePath` is populated regardless of privilege level (unlike
 /// `Get-Process .Path`, which is null for elevated processes like Vanguard).
 #[cfg(windows)]
 fn find_exe_path(process_name: &str) -> Option<String> {
-    query_processes()
+    query_processes_cached()
         .into_iter()
         .find(|(name, path)| {
             name.eq_ignore_ascii_case(process_name)
@@ -456,9 +535,26 @@ fn find_exe_path(process_name: &str) -> Option<String> {
         .and_then(|(_, path)| path)
 }
 
+/// True if `path` names an executable that actually belongs to a running
+/// process. The renderer supplies `exe_path` for icon extraction, so this keeps
+/// a compromised or buggy frontend from pointing the icon loader at an
+/// arbitrary file on disk.
+#[cfg(windows)]
+fn is_known_process_path(path: &str) -> bool {
+    query_processes_cached()
+        .iter()
+        .any(|(_, p)| p.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(path)))
+}
+
+/// Validates a user-picked executable path for the watch list. Restricted to
+/// `.exe` files that are regular files, so this can't be used as a general
+/// filesystem probe for arbitrary paths.
 #[tauri::command]
 fn check_exe_exists(path: String) -> bool {
-    std::path::Path::new(&path).exists()
+    if !path.to_lowercase().ends_with(".exe") {
+        return false;
+    }
+    std::path::Path::new(&path).is_file()
 }
 
 #[tauri::command]
@@ -523,8 +619,8 @@ pub fn run() {
                     "toggle" => {
                         let state = app.state::<AppState>();
                         let new_val = !state.watch_state.is_enabled();
+                        // set_enabled already emits "enabled-changed" itself.
                         let _ = set_enabled(new_val, state, app.clone());
-                        let _ = app.emit("enabled-changed", new_val);
                     }
                     "open" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -573,10 +669,9 @@ pub fn run() {
             // Load config and start WMI watcher
             let config = load_config_from_disk(app.handle());
             let startup_monitor = config.monitor_name.clone();
-            let watch_state = Arc::new(WatchState::new(config));
-
-            // Restore the persisted enabled/paused state across restarts.
-            watch_state.set_enabled(app_settings.enabled);
+            // Restore the persisted enabled/paused state across restarts up
+            // front, so the watcher never sees a stale `true`.
+            let watch_state = Arc::new(WatchState::new(config, app_settings.enabled));
 
             let tray_id_cell = std::sync::OnceLock::new();
             let _ = tray_id_cell.set(_tray.id().clone());
@@ -654,4 +749,30 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Serialized by the shared counter: these must not run concurrently, and
+    // cargo test does run them on separate threads. Each claims its own
+    // generations, so ordering between tests is irrelevant — only the relative
+    // order of claims within a test matters.
+    #[test]
+    fn only_the_newest_save_applies_hz() {
+        // A lone save is the newest and applies.
+        let first = claim_save_generation();
+        assert!(is_newest_save(first));
+
+        // A second save lands while the first thread is still reconciling. The
+        // stale thread must bail; the newest one applies.
+        let second = claim_save_generation();
+        assert!(!is_newest_save(first));
+        assert!(is_newest_save(second));
+
+        // Generations are strictly increasing, so a late claim never collides
+        // with an earlier one still in flight.
+        assert!(second > first);
+    }
 }

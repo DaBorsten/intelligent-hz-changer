@@ -133,6 +133,19 @@ fn run_poll_loop(wmi_con: &wmi::WMIConnection, state: &Arc<WatchState>, app: &ta
             .unwrap_or_else(|e| e.into_inner())
             .retain(|pid| current_pids.contains(pid));
 
+        // Retire watched PIDs that vanished. watch_exit normally owns this edge,
+        // but it can't observe a process it never got a handle for (exited too
+        // fast, or OpenProcess denied), which would otherwise pin `running`
+        // non-empty forever and strand the monitor at game Hz.
+        let dead: Vec<u32> = state.running_pids().into_iter()
+            .filter(|pid| !current_pids.contains(pid))
+            .collect();
+        for pid in dead {
+            if state.on_process_stop(pid) && state.is_enabled() {
+                sync_hz(state, app, "Prozess beendet".into(), None, "process_stop");
+            }
+        }
+
         let watched: Vec<crate::process_watcher::WatchedProcess> = {
             let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
             cfg.watched_processes.clone()

@@ -188,17 +188,26 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     isDirtyRef.current = isDirty;
   }, [draftDefaultHz, draftGameHz, isDirty]);
 
+  // Enumerating monitors builds a COM/WMI connection and walks every display
+  // mode, so it runs once on mount rather than on every config/onChange change.
+  const hasMonitorName = !!config.monitor_name;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  // hasMonitorName is read for the initial-selection branch only; re-running on
+  // it would re-enumerate right after we set the name.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design
   useEffect(() => {
     invoke<MonitorInfoExtended[]>("get_monitors_extended")
       .then((mons) => {
         setMonitors(mons);
-        if (!config.monitor_name && mons.length > 0) {
+        if (!hasMonitorName && mons.length > 0) {
           const initial = mons.find((m) => m.is_primary) ?? mons[0];
-          onChange({ monitor_name: initial.device_name });
+          onChangeRef.current({ monitor_name: initial.device_name });
         }
       })
       .catch(console.error);
-  }, [config.monitor_name, onChange]);
+  }, []);
 
   const prevMonitorRef = useRef<string>("");
 

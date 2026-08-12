@@ -109,7 +109,9 @@ pub struct WatchState {
 }
 
 impl WatchState {
-    pub fn new(config: WatchConfig) -> Self {
+    /// `enabled` is passed in rather than defaulted so the watcher never runs a
+    /// single edge with the wrong value between construction and restore.
+    pub fn new(config: WatchConfig, enabled: bool) -> Self {
         let counts = config
             .watched_processes
             .iter()
@@ -119,7 +121,7 @@ impl WatchState {
             running: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(config)),
             process_counts: Arc::new(Mutex::new(counts)),
-            enabled: Arc::new(AtomicBool::new(true)),
+            enabled: Arc::new(AtomicBool::new(enabled)),
             hz_lock: Arc::new(Mutex::new(())),
             watching: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -172,6 +174,16 @@ impl WatchState {
         }
     }
 
+    /// PIDs of all currently-tracked watched instances.
+    pub fn running_pids(&self) -> Vec<u32> {
+        self.running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .copied()
+            .collect()
+    }
+
     pub fn is_any_running(&self) -> bool {
         !self.running.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
@@ -187,36 +199,105 @@ impl WatchState {
         self.process_counts.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Atomically replaces config and prunes running entries no longer in the new config.
-    /// Returns true if removing unwatched entries left the running set empty — caller should reset Hz.
-    pub fn update_config(&self, config: WatchConfig) -> bool {
-        let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
-        for p in &config.watched_processes {
-            counts.entry(p.key()).or_insert(0);
-        }
-        drop(counts);
-
+    /// Atomically replaces config and prunes running entries no longer in the
+    /// new config. Callers re-derive the target Hz via `sync_hz` afterwards, so
+    /// nothing needs to be returned here.
+    pub fn update_config(&self, config: WatchConfig) {
         let new_watched: HashSet<String> =
             config.watched_processes.iter().map(|p| p.key()).collect();
         *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;
 
         let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        let was_active = !running.is_empty();
-        let removed: Vec<String> = running
-            .iter()
-            .filter(|(_pid, key)| !new_watched.contains(*key))
-            .map(|(_pid, key)| key.clone())
-            .collect();
         running.retain(|_pid, key| new_watched.contains(key));
-        let had_active = was_active && running.is_empty();
         drop(running);
 
-        let mut counts = self.process_counts.lock().unwrap_or_else(|e| e.into_inner());
-        for key in removed {
-            if let Some(c) = counts.get_mut(&key) {
-                *c = c.saturating_sub(1);
+        // Counts are keyed by watched entry, so anything no longer watched is
+        // dead weight — dropping it keeps the map from growing without bound.
+        // Surviving keys are recounted from `running` so a removed-then-readded
+        // entry can't resurrect a stale count.
+        let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        let mut fresh: HashMap<String, u32> =
+            new_watched.iter().map(|k| (k.clone(), 0u32)).collect();
+        for key in running.values() {
+            if let Some(c) = fresh.get_mut(key) {
+                *c += 1;
             }
         }
-        had_active
+        drop(running);
+        *self.process_counts.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(names: &[&str]) -> WatchConfig {
+        WatchConfig {
+            watched_processes: names
+                .iter()
+                .map(|n| WatchedProcess::Name((*n).into()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn start_and_stop_edges_fire_once() {
+        let s = WatchState::new(cfg(&["game.exe"]), true);
+
+        // First instance is the empty -> non-empty edge; a second is not.
+        assert!(s.on_process_start("game.exe", "", 1));
+        assert!(!s.on_process_start("game.exe", "", 2));
+        // Same PID twice must not double-count.
+        assert!(!s.on_process_start("game.exe", "", 2));
+        assert_eq!(s.get_process_counts()["game.exe"], 2);
+
+        // Only the last instance leaving is the down edge.
+        assert!(!s.on_process_stop(1));
+        assert!(s.on_process_stop(2));
+        // An unknown PID is a no-op, not an edge.
+        assert!(!s.on_process_stop(999));
+        assert!(!s.is_any_running());
+        assert_eq!(s.get_process_counts()["game.exe"], 0);
+    }
+
+    #[test]
+    fn unwatched_processes_never_register() {
+        let s = WatchState::new(cfg(&["game.exe"]), true);
+        assert!(!s.on_process_start("notepad.exe", "", 1));
+        assert!(!s.is_any_running());
+    }
+
+    #[test]
+    fn update_config_prunes_running_and_counts() {
+        let s = WatchState::new(cfg(&["a.exe", "b.exe"]), true);
+        s.on_process_start("a.exe", "", 1);
+        s.on_process_start("b.exe", "", 2);
+
+        // Dropping b.exe from the watch list must retire its running entry and
+        // drop its count entirely, not leave a stale key behind.
+        s.update_config(cfg(&["a.exe"]));
+        let counts = s.get_process_counts();
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts["a.exe"], 1);
+        assert_eq!(s.running_pids(), vec![1]);
+
+        // Re-adding starts from the real running set, not a resurrected count.
+        s.update_config(cfg(&["a.exe", "b.exe"]));
+        let counts = s.get_process_counts();
+        assert_eq!(counts["a.exe"], 1);
+        assert_eq!(counts["b.exe"], 0);
+
+        // Removing the last watched entry leaves nothing running.
+        s.update_config(cfg(&[]));
+        assert!(!s.is_any_running());
+        assert!(s.get_process_counts().is_empty());
+    }
+
+    #[test]
+    fn enabled_is_taken_from_the_caller() {
+        assert!(!WatchState::new(cfg(&[]), false).is_enabled());
+        assert!(WatchState::new(cfg(&[]), true).is_enabled());
     }
 }

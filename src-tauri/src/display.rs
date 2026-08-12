@@ -185,7 +185,28 @@ mod inner {
         monitors
     }
 
+    // Enumerating every display mode of every monitor is the most expensive
+    // call in this module, and the UI hits it from several components. Monitor
+    // geometry only changes on a display reconfiguration, so a short TTL is safe.
+    static EXTENDED_CACHE: Mutex<Option<(Instant, Vec<MonitorInfoExtended>)>> = Mutex::new(None);
+    const EXTENDED_TTL: Duration = Duration::from_secs(3);
+
     pub fn get_monitors_extended() -> Vec<MonitorInfoExtended> {
+        if let Ok(guard) = EXTENDED_CACHE.lock() {
+            if let Some((ts, cached)) = guard.as_ref() {
+                if ts.elapsed() < EXTENDED_TTL {
+                    return cached.clone();
+                }
+            }
+        }
+        let fresh = query_monitors_extended();
+        if let Ok(mut guard) = EXTENDED_CACHE.lock() {
+            *guard = Some((Instant::now(), fresh.clone()));
+        }
+        fresh
+    }
+
+    fn query_monitors_extended() -> Vec<MonitorInfoExtended> {
         // Determine which adapters carry the primary-device flag from Windows
         let mut primary_names = std::collections::HashSet::new();
         {
