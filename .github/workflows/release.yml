@@ -9,6 +9,9 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: read
+
 jobs:
   release:
     permissions:
@@ -19,11 +22,34 @@ jobs:
         include:
           - platform: 'windows-latest'
             args: ''
+          - platform: 'ubuntu-24.04'
+            args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            patchelf \
+            desktop-file-utils \
+            rpm
+          pkg-config --modversion webkit2gtk-4.1 javascriptcoregtk-4.1 libsoup-3.0 gtk+-3.0 dbus-1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
