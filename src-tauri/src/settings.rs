@@ -198,3 +198,46 @@ pub fn get_autostart(app_name: &str) -> bool {
         data[0] == 0x02
     }
 }
+
+/// Path to the XDG autostart .desktop file GNOME's own "Automatisch
+/// ausführen" toggle reads and writes, so both stay in sync.
+#[cfg(not(windows))]
+fn autostart_desktop_path(app_name: &str) -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME nicht gesetzt".to_string())?;
+    Ok(std::path::Path::new(&home)
+        .join(".config/autostart")
+        .join(format!("{app_name}.desktop")))
+}
+
+#[cfg(not(windows))]
+pub fn set_autostart(app_name: &str, exe_path: &str, enable: bool) -> Result<(), String> {
+    let path = autostart_desktop_path(app_name)?;
+
+    if !enable {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+
+    let contents = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name={app_name}\n\
+         Exec=\"{exe_path}\"\n\
+         X-GNOME-Autostart-enabled=true\n"
+    );
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+pub fn get_autostart(app_name: &str) -> bool {
+    match autostart_desktop_path(app_name) {
+        Ok(path) => path.exists(),
+        Err(_) => false,
+    }
+}

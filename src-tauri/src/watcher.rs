@@ -9,7 +9,9 @@ pub fn start(state: Arc<WatchState>, app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
         #[cfg(windows)]
         run_start_watcher(state, app_handle);
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        run_start_watcher_linux(state, app_handle);
+        #[cfg(not(any(windows, target_os = "linux")))]
         let _ = (state, app_handle);
     });
 }
@@ -196,11 +198,134 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
     }
 }
 
+/// One running process, as read from `/proc`.
+#[cfg(target_os = "linux")]
+pub struct ProcInfo {
+    pub pid: u32,
+    pub name: String,
+    pub exe_path: String,
+}
+
+/// Linux has no process-creation event API available without admin/root
+/// (netlink proc connector) or a kernel new enough to guarantee pidfd-based
+/// polling, so this scans `/proc` directly — the same tradeoff the Windows
+/// WMI poll fallback already makes.
+#[cfg(target_os = "linux")]
+pub fn list_processes_linux() -> Vec<ProcInfo> {
+    let mut result = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return result;
+    };
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let exe_path = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let name = linux_process_name(pid, &exe_path);
+        if name.is_empty() {
+            continue;
+        }
+        result.push(ProcInfo { pid, name, exe_path });
+    }
+    result
+}
+
+/// `/proc/<pid>/comm` mirrors what `ps`/`top` show, and — notably — is what
+/// the kernel sets for shebang-launched scripts (the script's own basename,
+/// not the interpreter). The `/proc/<pid>/exe` symlink target would instead
+/// resolve to e.g. `/usr/bin/bash` for a script, or to a Wine/Proton loader
+/// binary rather than the wrapped Windows .exe's own name, so `comm` matches
+/// what a user configuring the watch list actually expects to type in.
+///
+/// The kernel truncates `comm` to 15 bytes, which would otherwise make a
+/// longer-named binary impossible to match against a watch entry the user typed
+/// out in full. So when `comm` is exactly that long and the executable's own
+/// basename extends it, that basename is the untruncated name and wins. Script
+/// and Wine/Proton launches keep `comm`: their `exe` symlink resolves to the
+/// interpreter/loader, whose basename does not extend `comm`, so the check
+/// simply doesn't fire.
+#[cfg(target_os = "linux")]
+fn linux_process_name(pid: u32, exe_path: &str) -> String {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    if comm.len() == 15 {
+        if let Some(base) = std::path::Path::new(exe_path)
+            .file_name()
+            .map(|b| b.to_string_lossy().into_owned())
+        {
+            if base.len() > comm.len() && base.starts_with(&comm) {
+                return base;
+            }
+        }
+    }
+    comm
+}
+
+#[cfg(target_os = "linux")]
+pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
+    let watched: Vec<crate::process_watcher::WatchedProcess> = {
+        let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
+        cfg.watched_processes.clone()
+    };
+    for proc in &list_processes_linux() {
+        if watched.iter().any(|w| w.matches(&proc.name, &proc.exe_path)) {
+            register_process(state, app, &proc.name, &proc.exe_path, proc.pid);
+        }
+    }
+}
+
+/// Polls `/proc` every 2s: registers newly-matched watched processes and
+/// retires PIDs that vanished (mirrors `run_poll_loop`'s dead-PID handling —
+/// `watch_exit` normally owns that edge but can't observe a process it never
+/// got a handle for).
+#[cfg(target_os = "linux")]
+fn run_start_watcher_linux(state: Arc<WatchState>, app: tauri::AppHandle) {
+    loop {
+        let processes = list_processes_linux();
+        let current_pids: HashSet<u32> = processes.iter().map(|p| p.pid).collect();
+
+        state
+            .watching
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|pid| current_pids.contains(pid));
+
+        let dead: Vec<u32> = state
+            .running_pids()
+            .into_iter()
+            .filter(|pid| !current_pids.contains(pid))
+            .collect();
+        for pid in dead {
+            if state.on_process_stop(pid) && state.is_enabled() {
+                sync_hz(&state, &app, "Prozess beendet".into(), None, "process_stop");
+            }
+        }
+
+        let watched: Vec<crate::process_watcher::WatchedProcess> = {
+            let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
+            cfg.watched_processes.clone()
+        };
+        for proc in &processes {
+            if watched.iter().any(|w| w.matches(&proc.name, &proc.exe_path)) {
+                register_process(&state, &app, &proc.name, &proc.exe_path, proc.pid);
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
 /// Registers one watched process: triggers Hz up on the empty→non-empty edge and
 /// arms exactly one `watch_exit` thread for the PID. Safe to call repeatedly —
 /// `on_process_start` is idempotent per PID and the spawn is gated on the shared
 /// `watching` set, so neither counts nor threads are duplicated.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn register_process(state: &Arc<WatchState>, app: &tauri::AppHandle, name: &str, exe_path: &str, pid: u32) {
     let started = state.on_process_start(name, exe_path, pid);
     if started {
@@ -251,6 +376,18 @@ pub fn set_monitor_hz(
     if let Err(e) = crate::display::set_refresh_rate(monitor, target) {
         crate::logging::log(&format!("  -> set_refresh_rate FAILED: {e}"));
         eprintln!("set_refresh_rate error: {e}");
+        // Tell the UI. A silent failure looks identical to a switch that never
+        // needed to happen, and the displayed Hz then simply disagrees with the
+        // mode the user configured until they go looking for the log.
+        let _ = app.emit(
+            "hz-error",
+            serde_json::json!({
+                "monitor": monitor,
+                "target_hz": target,
+                "reason": reason,
+                "error": e,
+            }),
+        );
         return;
     }
     let after = crate::display::get_current_refresh_rate(monitor);
@@ -296,26 +433,11 @@ pub fn sync_hz(
     set_monitor_hz(state, app, &monitor, target, reason, process_name, event_type);
 }
 
-/// Blocks until the process exits using a kernel event — zero CPU overhead.
-/// No admin required: PROCESS_SYNCHRONIZE works on all user processes.
-#[cfg(windows)]
-fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
-
-    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
-        Ok(handle) => {
-            unsafe { WaitForSingleObject(handle, u32::MAX) }; // INFINITE
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
-        }
-        Err(_) => {
-            // Process already terminated before we could open it.
-        }
-    }
-
-    // Release the PID so a restart re-arms a fresh watch_exit thread.
+/// Shared tail once a watched process's exit has been detected: release the
+/// PID (so a restart re-arms a fresh `watch_exit` thread) and fire the
+/// empty-set edge if this was the last running instance.
+#[cfg(any(windows, target_os = "linux"))]
+fn on_watched_process_exited(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
     state
         .watching
         .lock()
@@ -335,4 +457,40 @@ fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHan
             "process_stop",
         );
     }
+}
+
+/// Blocks until the process exits using a kernel event — zero CPU overhead.
+/// No admin required: PROCESS_SYNCHRONIZE works on all user processes.
+#[cfg(windows)]
+fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+
+    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        Ok(handle) => {
+            unsafe { WaitForSingleObject(handle, u32::MAX) }; // INFINITE
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
+        Err(_) => {
+            // Process already terminated before we could open it.
+        }
+    }
+
+    on_watched_process_exited(pid, name, state, app);
+}
+
+/// Blocks until the process exits by polling for `/proc/<pid>` to disappear.
+/// Linux has no portable "wait for an arbitrary PID" primitive without pidfd
+/// (kernel 5.3+/glibc 2.36+, not guaranteed on every distro) or the root-only
+/// netlink proc connector, so this mirrors the WMI poll-loop fallback already
+/// used on Windows. A 1s interval is negligible for a handful of watched PIDs.
+#[cfg(target_os = "linux")]
+fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
+    while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        std::thread::sleep(Duration::from_millis(1000));
+    }
+
+    on_watched_process_exited(pid, name, state, app);
 }

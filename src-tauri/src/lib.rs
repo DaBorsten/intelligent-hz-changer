@@ -1,5 +1,7 @@
 mod display;
 mod identify;
+#[cfg(target_os = "linux")]
+mod linux_theme;
 mod logging;
 mod process_icon;
 mod process_watcher;
@@ -37,15 +39,42 @@ struct AppState {
     close_to_tray: std::sync::atomic::AtomicBool,
 }
 
+/// Applies the theme the user picked (`light`, `dark`, or `system`) to the
+/// native window and reports back which one that resolved to, so the
+/// frontend can style the webview to match. `None` means "couldn't tell" —
+/// the frontend then falls back to its own `prefers-color-scheme` query.
 #[tauri::command]
-fn set_window_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+fn set_window_theme(app: tauri::AppHandle, theme: String) -> Result<Option<String>, String> {
     let window = app.get_webview_window("main").ok_or("no main window")?;
-    let t = match theme.as_str() {
+    let resolved = match theme.as_str() {
         "light" => Some(Theme::Light),
         "dark" => Some(Theme::Dark),
-        _ => None,
+        _ => {
+            #[cfg(target_os = "linux")]
+            {
+                linux_theme::system_theme()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                None
+            }
+        }
     };
-    window.set_theme(t).map_err(|e| e.to_string())
+
+    // Passing `None` here means "follow the OS", which is what we want on
+    // Windows/macOS in system mode. On Linux it instead resets
+    // `gtk-application-prefer-dark-theme` to false — a light title bar on a
+    // dark desktop — which is why `system_theme` resolves it beforehand.
+    window.set_theme(resolved).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    linux_theme::sync_gtk_theme(&app, resolved == Some(Theme::Dark));
+
+    Ok(match resolved {
+        Some(Theme::Dark) => Some("dark".to_string()),
+        Some(Theme::Light) => Some("light".to_string()),
+        _ => None,
+    })
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -60,6 +89,13 @@ fn get_monitors_extended() -> Vec<MonitorInfoExtended> {
     display::get_monitors_extended()
 }
 
+/// Reports whether the platform's display backend is usable, so an empty
+/// monitor list can be explained rather than just shown.
+#[tauri::command]
+fn get_display_backend_status() -> display::BackendStatus {
+    display::backend_status()
+}
+
 #[tauri::command]
 fn get_supported_hz(monitor_name: String) -> Vec<u32> {
     display::get_supported_refresh_rates(&monitor_name)
@@ -72,8 +108,16 @@ fn get_current_hz(monitor_name: String) -> u32 {
 
 /// Monotonic token so only the most recent `test_hz` call reverts the rate.
 /// Without it, overlapping tests would each restore their own stale "current"
-/// value after 5 s, clobbering one another.
+/// value once their countdown ran out, clobbering one another.
 static TEST_HZ_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long the frontend should show a test as running — and label the button
+/// with. Not a constant: GNOME runs the trial through its own confirmation
+/// prompt on a timeout we don't control.
+#[tauri::command]
+fn get_test_seconds() -> u32 {
+    display::test_seconds()
+}
 
 #[tauri::command]
 fn test_hz(
@@ -82,16 +126,23 @@ fn test_hz(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let ws = Arc::clone(&state.watch_state);
-    let current = {
+    let (current, desktop_owns_trial) = {
         let _guard = ws.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = display::get_current_refresh_rate(&monitor_name);
-        display::set_refresh_rate(&monitor_name, hz)?;
-        current
+        let owned = display::set_refresh_rate_for_test(&monitor_name, hz)?;
+        (current, owned)
     };
+    // Bump the token even when we don't revert ourselves, so a still-pending
+    // revert from an earlier test can't fire on top of this one.
     let token = TEST_HZ_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if desktop_owns_trial {
+        return Ok(());
+    }
     let mn = monitor_name.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(
+            display::test_seconds() as u64
+        ));
         if TEST_HZ_TOKEN.load(std::sync::atomic::Ordering::Relaxed) != token {
             return; // a newer test superseded this one
         }
@@ -114,10 +165,10 @@ fn test_hz(
 }
 
 #[tauri::command]
-fn identify_monitors(theme: Option<String>) {
+fn identify_monitors(app: tauri::AppHandle, theme: Option<String>) {
     let monitors = display::get_monitors_extended();
     let is_light = theme.as_deref() == Some("light");
-    identify::show_overlays(monitors, is_light);
+    identify::show_overlays(&app, monitors, is_light);
 }
 
 #[tauri::command]
@@ -167,10 +218,11 @@ fn save_config(
     state.watch_state.update_config(config);
 
     // A process just added to the list may already be running — no WMI creation
-    // event will ever fire for it, so reconcile the running set once now.
-    // Off the IPC thread: a full WMI process enumeration takes 100–500 ms and
-    // would otherwise block the command (and with it the UI's await).
-    #[cfg(windows)]
+    // event (Windows) or poll tick (Linux) will otherwise catch it for up to
+    // one interval, so reconcile the running set once now. Off the IPC thread:
+    // a full process enumeration takes 100–500 ms and would otherwise block
+    // the command (and with it the UI's await).
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let ws = Arc::clone(&state.watch_state);
         let app_c = app.clone();
@@ -200,7 +252,7 @@ fn save_config(
             }
         });
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     if state.watch_state.is_enabled() {
         watcher::sync_hz(
             &state.watch_state,
@@ -248,6 +300,9 @@ fn set_enabled(
     // Update tray tooltip + menu item label
     if let Some(tray_id) = state.tray_id.get() {
         if let Some(tray) = app.tray_by_id(tray_id) {
+            // Tray tooltips are unsupported on Linux (see the tray setup in
+            // `run`), so the menu label is the only state indicator there.
+            #[cfg(not(target_os = "linux"))]
             let _ = tray.set_tooltip(Some(if value {
                 "Intelligent Hz Changer – aktiv"
             } else {
@@ -336,12 +391,11 @@ fn load_settings(app: tauri::AppHandle) -> settings::AppSettings {
         settings::AppSettings::default()
     };
 
-    // Always reflect the real registry state, not the stored value.
-    // This way external changes (e.g. Task Manager autostart toggle) are shown correctly.
-    #[cfg(windows)]
-    {
-        s.autostart = settings::get_autostart("IntelligentHzChanger");
-    }
+    // Always reflect the real autostart state (registry on Windows, the XDG
+    // .desktop file elsewhere), not the stored value. This way external
+    // changes (e.g. Task Manager or the GNOME "Automatisch ausführen"
+    // toggle) are shown correctly.
+    s.autostart = settings::get_autostart("IntelligentHzChanger");
 
     s
 }
@@ -365,14 +419,11 @@ fn save_settings(
         std::sync::atomic::Ordering::Relaxed,
     );
 
-    // Autostart via Windows registry
-    #[cfg(windows)]
-    {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        settings::set_autostart("IntelligentHzChanger", &exe, s.autostart)?;
-    }
+    // Autostart via Windows registry, or an XDG .desktop file elsewhere.
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    settings::set_autostart("IntelligentHzChanger", &exe, s.autostart)?;
 
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
@@ -396,9 +447,16 @@ async fn get_process_icon(process_name: String, exe_path: Option<String>) -> Opt
                 .or_else(|| find_exe_path(&process_name))?;
             process_icon::extract_icon_base64(&path)
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
-            let _ = process_name;
+            // No validation of `exe_path` needed here (unlike Windows): the
+            // lookup never opens it, it only compares its basename against
+            // desktop entries, and the icon file itself comes from those.
+            process_icon::lookup_icon_base64(&process_name, exe_path.as_deref())
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = (process_name, exe_path);
             None
         }
     })
@@ -458,7 +516,17 @@ async fn get_all_running_processes() -> Vec<String> {
             names.dedup_by_key(|n| n.to_lowercase());
             names
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            let mut names: Vec<String> = list_user_processes_linux()
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+            names.sort_unstable_by_key(|n| n.to_lowercase());
+            names.dedup_by_key(|n| n.to_lowercase());
+            names
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         Vec::<String>::new()
     })
     .await
@@ -486,11 +554,34 @@ async fn get_running_processes_with_paths() -> Vec<RunningProcess> {
             procs.sort_unstable_by_key(|p| p.name.to_lowercase());
             procs
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            let mut seen = std::collections::HashSet::new();
+            let mut procs: Vec<RunningProcess> = list_user_processes_linux()
+                .into_iter()
+                .filter(|p| seen.insert(p.name.to_lowercase()))
+                .map(|p| RunningProcess { name: p.name, path: Some(p.exe_path) })
+                .collect();
+            procs.sort_unstable_by_key(|p| p.name.to_lowercase());
+            procs
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         vec![]
     })
     .await
     .unwrap_or_default()
+}
+
+/// Running processes worth offering in the picker. `/proc` also lists kernel
+/// threads and other users' daemons, whose `exe` symlink can't be resolved —
+/// dropping those leaves the user's own applications, which is all a watch list
+/// can meaningfully contain.
+#[cfg(target_os = "linux")]
+fn list_user_processes_linux() -> Vec<watcher::ProcInfo> {
+    watcher::list_processes_linux()
+        .into_iter()
+        .filter(|p| !p.exe_path.is_empty() && !p.name.is_empty())
+        .collect()
 }
 
 /// Cached process snapshot for icon lookups. Resolving N icons on a tab render
@@ -547,13 +638,27 @@ fn is_known_process_path(path: &str) -> bool {
 }
 
 /// Validates a user-picked executable path for the watch list. Restricted to
-/// `.exe` files that are regular files, so this can't be used as a general
+/// executables — `.exe` files on Windows, files carrying an execute bit on
+/// Linux (which has no extension to go by) — so this can't be used as a general
 /// filesystem probe for arbitrary paths.
 #[tauri::command]
 fn check_exe_exists(path: String) -> bool {
-    if !path.to_lowercase().ends_with(".exe") {
-        return false;
+    #[cfg(windows)]
+    {
+        if !path.to_lowercase().ends_with(".exe") {
+            return false;
+        }
+        std::path::Path::new(&path).is_file()
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return false;
+        };
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(any(windows, unix)))]
     std::path::Path::new(&path).is_file()
 }
 
@@ -582,12 +687,30 @@ fn load_config_from_disk(app: &tauri::AppHandle) -> WatchConfig {
     }
 }
 
+/// Handles the case where this process is the identify-overlay helper that
+/// `identify` spawned, rather than the app itself: draws the badges, and
+/// returns `true` so `main` exits without starting Tauri — in particular
+/// before the single-instance plugin would see a second instance.
+#[cfg(target_os = "linux")]
+pub fn run_overlay_if_requested() -> bool {
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() != Some(identify::OVERLAY_ARG) {
+        return false;
+    }
+    if let Some(payload) = args.next() {
+        identify::run_overlay_process(&payload);
+    }
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+            use tauri::tray::TrayIconBuilder;
+            #[cfg(not(target_os = "linux"))]
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 
             // Load persisted settings up front so the tray reflects the restored state.
             let app_settings = read_settings(app.handle());
@@ -609,11 +732,6 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&toggle_item, &sep_item, &open_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::new()
-                .tooltip(if app_settings.enabled {
-                    "Intelligent Hz Changer – aktiv"
-                } else {
-                    "Intelligent Hz Changer – pausiert"
-                })
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => {
@@ -630,21 +748,35 @@ pub fn run() {
                     }
                     "quit" => app.exit(0),
                     _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
                 });
+
+            // Tooltips and icon clicks only exist on Windows/macOS. The Linux
+            // tray is an AppIndicator: `set_tooltip` is a documented no-op and
+            // `TrayIconEvent` is never emitted, so neither is set up there —
+            // the context menu ("App öffnen") is the whole interaction.
+            #[cfg(not(target_os = "linux"))]
+            {
+                tray_builder = tray_builder
+                    .tooltip(if app_settings.enabled {
+                        "Intelligent Hz Changer – aktiv"
+                    } else {
+                        "Intelligent Hz Changer – pausiert"
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    });
+            }
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
@@ -727,9 +859,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_monitors,
             get_monitors_extended,
+            get_display_backend_status,
             get_supported_hz,
             get_current_hz,
             test_hz,
+            get_test_seconds,
             identify_monitors,
             get_process_counts,
             load_config,

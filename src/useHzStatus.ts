@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import type { HzChangedPayload } from "./types";
+import type { HzChangedPayload, HzErrorPayload } from "./types";
 
 /** Latest Hz + running watched keys, shared by the header and the status view. */
 export interface HzStatus {
@@ -9,6 +9,9 @@ export interface HzStatus {
   running: string[];
   /** Increments on every hz-changed event so consumers can react to one. */
   lastEvent: HzChangedPayload | null;
+  /** The most recent switch the display driver refused, until it is either
+   * dismissed or superseded by a switch that worked. */
+  lastError: HzErrorPayload | null;
 }
 
 type Listener = (s: HzStatus) => void;
@@ -16,11 +19,16 @@ type Listener = (s: HzStatus) => void;
 // ponytail: one module-level store instead of a context provider — there is
 // exactly one backend to poll, and two components that need it. A provider adds
 // a wrapper and no behaviour.
-let state: HzStatus = { currentHz: null, running: [], lastEvent: null };
+let state: HzStatus = {
+  currentHz: null,
+  running: [],
+  lastEvent: null,
+  lastError: null,
+};
 const listeners = new Set<Listener>();
 let monitorName = "";
 let timer: ReturnType<typeof setInterval> | null = null;
-let unlisten: (() => void) | null = null;
+const unlisteners: (() => void)[] = [];
 // listen() resolves asynchronously, so a stop/start round-trip can leave a
 // registration in flight. The generation is bumped on every stop: a handle that
 // resolves for a superseded generation is dropped on arrival instead of
@@ -43,6 +51,14 @@ function refresh() {
     .catch(() => undefined);
 }
 
+/** Keeps a registration only while it is still current — a teardown that ran
+ * before `listen` resolved must still take effect, and so must one that already
+ * started a newer generation. */
+function keep(gen: number, fn: () => void) {
+  if (gen !== generation || listeners.size === 0) fn();
+  else unlisteners.push(fn);
+}
+
 function start() {
   const gen = generation;
   // Poll so manual Hz changes made in Windows — which fire no event — still show.
@@ -51,17 +67,23 @@ function start() {
     // A listener from a superseded generation may still fire between resolving
     // and being torn down below; its updates are not wanted.
     if (gen !== generation) return;
-    emit({ currentHz: e.payload.current_hz, lastEvent: e.payload });
+    // A switch that worked answers whatever the last failed one reported.
+    emit({
+      currentHz: e.payload.current_hz,
+      lastEvent: e.payload,
+      lastError: null,
+    });
     // The event says what we set; the running set says which mode we're in.
     invoke<string[]>("get_running_watched")
       .then((running) => emit({ running }))
       .catch(() => undefined);
-  }).then((fn) => {
-    // A teardown that ran before the listener resolved must still take effect,
-    // and so must one that already started a newer generation.
-    if (gen !== generation || listeners.size === 0) fn();
-    else unlisten = fn;
-  });
+  }).then((fn) => keep(gen, fn));
+
+  void listen<HzErrorPayload>("hz-error", (e) => {
+    if (gen !== generation) return;
+    emit({ lastError: e.payload });
+  }).then((fn) => keep(gen, fn));
+
   refresh();
 }
 
@@ -70,8 +92,12 @@ function stop() {
   generation++;
   if (timer) clearInterval(timer);
   timer = null;
-  unlisten?.();
-  unlisten = null;
+  for (const fn of unlisteners.splice(0)) fn();
+}
+
+/** Dismisses the current Hz error banner. */
+export function clearHzError() {
+  emit({ lastError: null });
 }
 
 /**

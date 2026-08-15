@@ -397,24 +397,66 @@ mod inner {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod linux;
+
+/// Whether the display backend can actually be talked to. An unreachable
+/// backend otherwise looks exactly like "no monitors attached" — an empty list
+/// and nothing else — which leaves the user with no way to tell that the app is
+/// simply unable to drive their session.
+///
+/// `code` is a stable identifier the frontend translates; `detail` carries the
+/// untranslated specifics (desktop name, missing binary) to interpolate.
+#[derive(Debug, Serialize, Clone)]
+pub struct BackendStatus {
+    pub ok: bool,
+    pub code: String,
+    pub detail: String,
+}
+
+impl BackendStatus {
+    pub fn working() -> Self {
+        Self { ok: true, code: "ok".into(), detail: String::new() }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn failing(code: &str, detail: impl Into<String>) -> Self {
+        Self { ok: false, code: code.into(), detail: detail.into() }
+    }
+}
+
+pub fn backend_status() -> BackendStatus {
+    #[cfg(target_os = "linux")]
+    return linux::backend_status();
+    // Windows always has GDI; anything else has no backend to check.
+    #[cfg(not(target_os = "linux"))]
+    BackendStatus::working()
+}
+
 pub fn enumerate_monitors() -> Vec<MonitorInfo> {
     #[cfg(windows)]
     return inner::enumerate_monitors();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::enumerate_monitors();
+    #[cfg(not(any(windows, target_os = "linux")))]
     vec![]
 }
 
 pub fn get_monitors_extended() -> Vec<MonitorInfoExtended> {
     #[cfg(windows)]
     return inner::get_monitors_extended();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::get_monitors_extended();
+    #[cfg(not(any(windows, target_os = "linux")))]
     vec![]
 }
 
 pub fn get_supported_refresh_rates(monitor_name: &str) -> Vec<u32> {
     #[cfg(windows)]
     return inner::get_supported_refresh_rates(monitor_name);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::get_supported_refresh_rates(monitor_name);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = monitor_name;
         vec![]
@@ -424,7 +466,9 @@ pub fn get_supported_refresh_rates(monitor_name: &str) -> Vec<u32> {
 pub fn get_current_refresh_rate(monitor_name: &str) -> u32 {
     #[cfg(windows)]
     return inner::get_current_refresh_rate(monitor_name);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::get_current_refresh_rate(monitor_name);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = monitor_name;
         0
@@ -434,9 +478,34 @@ pub fn get_current_refresh_rate(monitor_name: &str) -> u32 {
 pub fn set_refresh_rate(monitor_name: &str, hz: u32) -> Result<(), String> {
     #[cfg(windows)]
     return inner::set_refresh_rate(monitor_name, hz);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::set_refresh_rate(monitor_name, hz);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (monitor_name, hz);
         Err("Not supported on this platform".into())
     }
+}
+
+/// Length of a trial rate when we run the countdown ourselves.
+pub const DEFAULT_TEST_SECONDS: u32 = 5;
+
+/// How long a trial rate stays applied before it goes back. Platform-dependent:
+/// GNOME insists on running its own, longer countdown behind a confirmation
+/// prompt, so the UI has to advertise that duration instead of ours.
+pub fn test_seconds() -> u32 {
+    #[cfg(target_os = "linux")]
+    return linux::test_seconds();
+    #[cfg(not(target_os = "linux"))]
+    DEFAULT_TEST_SECONDS
+}
+
+/// Applies `hz` as a trial. `Ok(true)` means the desktop environment owns the
+/// trial — it prompts the user and restores the previous rate itself, so the
+/// caller must not schedule a revert of its own.
+pub fn set_refresh_rate_for_test(monitor_name: &str, hz: u32) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    return linux::set_refresh_rate_for_test(monitor_name, hz);
+    #[cfg(not(target_os = "linux"))]
+    set_refresh_rate(monitor_name, hz).map(|()| false)
 }

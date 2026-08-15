@@ -1,7 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { MonitorHz, MonitorInfoExtended, WatchConfig } from "../types";
+import type {
+  BackendStatus,
+  MonitorHz,
+  MonitorInfoExtended,
+  WatchConfig,
+} from "../types";
 import { useTheme } from "../useTheme";
 
 interface SelectOption {
@@ -137,9 +142,19 @@ interface Props {
   saving: boolean;
 }
 
-function extractDisplayNum(deviceName: string): number {
-  const m = deviceName.match(/DISPLAY(\d+)/i);
-  return m ? parseInt(m[1]) : 0;
+// Windows liefert `\\.\DISPLAYn` — diese Nummer sehen Nutzer auch in den
+// Windows-Anzeigeeinstellungen, also übernehmen wir sie. Linux-Connectornamen
+// (`eDP-1`, `DP-2`, `HDMI-A-1`) tragen keine solche Nummer; dort nummerieren
+// wir über die Reihenfolge durch, in der das Backend die Monitore liefert.
+function buildDisplayNums(
+  monitors: MonitorInfoExtended[],
+): Map<string, number> {
+  return new Map(
+    monitors.map((m, i) => {
+      const win = m.device_name.match(/DISPLAY(\d+)/i);
+      return [m.device_name, win ? parseInt(win[1]) : i + 1];
+    }),
+  );
 }
 
 function getMonitorLabel(
@@ -169,6 +184,11 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const [supportedHz, setSupportedHz] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
+  // How long a test lasts is a backend question: on GNOME the trial runs inside
+  // Mutter's own "keep these settings?" prompt, which counts down for 20 s.
+  const [testSeconds, setTestSeconds] = useState(5);
+  const [backend, setBackend] = useState<BackendStatus | null>(null);
+  const [testError, setTestError] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(640);
@@ -198,6 +218,12 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   // it would re-enumerate right after we set the name.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design
   useEffect(() => {
+    invoke<number>("get_test_seconds")
+      .then(setTestSeconds)
+      .catch(console.error);
+    invoke<BackendStatus>("get_display_backend_status")
+      .then(setBackend)
+      .catch(console.error);
     invoke<MonitorInfoExtended[]>("get_monitors_extended")
       .then((mons) => {
         setMonitors(mons);
@@ -268,7 +294,14 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     return () => obs.disconnect();
   }, []);
 
-  const layout = computeLayout(monitors, canvasWidth, CANVAS_H, CANVAS_PAD);
+  const displayNums = buildDisplayNums(monitors);
+  const layout = computeLayout(
+    monitors,
+    displayNums,
+    canvasWidth,
+    CANVAS_H,
+    CANVAS_PAD,
+  );
   const configuredMonitor = monitors.find(
     (m) => m.device_name === config.monitor_name,
   );
@@ -281,13 +314,17 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   async function handleTestHz() {
     if (!config.monitor_name) return;
     setTesting(true);
+    setTestError("");
     try {
       await invoke("test_hz", {
         monitorName: config.monitor_name,
         hz: draftGameHz,
       });
-      setTimeout(() => setTesting(false), 5500);
-    } catch {
+      setTimeout(() => setTesting(false), testSeconds * 1000 + 500);
+    } catch (e) {
+      // The rate the backend refused here is the one a save would apply too, so
+      // the reason has to be visible rather than just ending the test silently.
+      setTestError(String(e));
       setTesting(false);
     }
   }
@@ -316,8 +353,33 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
       ? supportedHz
       : [60, 75, 90, 120, 144, 165, 200, 240];
 
+  // An unusable backend produces an empty monitor list, which on its own looks
+  // like "no displays attached" — so say what actually went wrong. The generic
+  // fallback key covers codes a newer backend may add.
+  const backendError =
+    backend && !backend.ok
+      ? t(
+          [
+            `monitor.backendError.${backend.code}`,
+            "monitor.backendError.generic",
+          ],
+          { detail: backend.detail },
+        )
+      : null;
+
   return (
     <div className="space-y-4">
+      {backendError && (
+        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
+          <div className="text-sm font-semibold text-red-700 dark:text-red-300">
+            {t("monitor.backendError.title")}
+          </div>
+          <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5">
+            {backendError}
+          </div>
+        </div>
+      )}
+
       {/* Visual monitor canvas */}
       <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4">
         <div
@@ -472,8 +534,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
               >
                 {layout.find((l) =>
                   l.groupDeviceNames.includes(config.monitor_name),
-                )?.displayNum ??
-                  extractDisplayNum(configuredMonitor.device_name)}
+                )?.displayNum ?? displayNums.get(configuredMonitor.device_name)}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
@@ -566,6 +627,17 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         </div>
       )}
 
+      {testError && (
+        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
+          <div className="text-sm font-semibold text-red-700 dark:text-red-300">
+            {t("monitor.testFailed", { hz: draftGameHz })}
+          </div>
+          <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5 wrap-break-word select-text">
+            {testError}
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="sticky bottom-5 flex justify-end">
         <div className="flex items-center gap-2 bg-white dark:bg-[#1c1c1c] border border-black/8 dark:border-white/8 rounded-2xl shadow-lg px-2 py-2">
@@ -580,7 +652,9 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
             className="px-4 py-2 bg-[#f0eeeb] dark:bg-[#2a2a2a] border border-black/8 dark:border-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium
                        rounded-xl hover:bg-slate-200 dark:hover:bg-[#333] disabled:opacity-40 transition-colors"
           >
-            {testing ? t("monitor.testing") : t("monitor.testBtn")}
+            {testing
+              ? t("monitor.testing")
+              : t("monitor.testBtn", { seconds: testSeconds })}
           </button>
           <button
             onClick={handleSave}
@@ -609,6 +683,7 @@ interface LayoutItem {
 
 function computeLayout(
   monitors: MonitorInfoExtended[],
+  displayNums: Map<string, number>,
   canvasW: number,
   canvasH: number,
   pad: number,
@@ -649,7 +724,7 @@ function computeLayout(
 
   return groups.map((group) => {
     const rep = group[0];
-    const nums = group.map((m) => extractDisplayNum(m.device_name)).join("|");
+    const nums = group.map((m) => displayNums.get(m.device_name)).join("|");
     return {
       mon: rep,
       left: rep.x * scale + offsetX,

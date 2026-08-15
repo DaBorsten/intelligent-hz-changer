@@ -1,7 +1,9 @@
 {
   "app": {
     "subtitle": "Automatic refresh rate switcher",
-    "active": "Active"
+    "active": "Active",
+    "hzErrorTitle": "Switching to {{hz}} Hz failed",
+    "dismiss": "Dismiss"
   },
   "tabs": {
     "status": "Status",
@@ -38,8 +40,10 @@
   "processes": {
     "addTitle": "Add process",
     "addHint": "Name, path or .exe",
+    "addHintLinux": "Name or path",
     "pickRunning": "Pick from running processes",
     "inputPlaceholder": "Process name (e.g. game.exe)  or  path to .exe",
+    "inputPlaceholderLinux": "Process name (e.g. hl2_linux)  or  path to the binary",
     "browse": "Browse",
     "add": "Add",
     "watchedHeader": "Watched processes ({{count}})",
@@ -48,6 +52,7 @@
     "editTitle": "Edit",
     "removeTitle": "Remove",
     "notFound": "This EXE file was not found.",
+    "notFoundLinux": "This file was not found.",
     "pickerTitle": "Pick from running processes",
     "pickerHint": "Click to add a process directly",
     "pickerSearch": "Search running processes...",
@@ -61,6 +66,7 @@
     "save": "Save",
     "browseExeFilter": "Executable",
     "browseExeTitle": "Select EXE file",
+    "browseExeTitleLinux": "Select executable",
     "timesRun_one": "Run {{count}} time",
     "timesRun_other": "Run {{count}} times",
     "agoJustNow": "just now",
@@ -70,7 +76,9 @@
     "lastSeenWithCount": "{{countStr}} · {{ago}}",
     "lastSeenAgoOnly": "{{ago}}",
     "namePlaceholder": "processname.exe",
-    "pathPlaceholder": "e.g. C:\\Games\\MyGame\\game.exe"
+    "namePlaceholderLinux": "processname",
+    "pathPlaceholder": "e.g. C:\\Games\\MyGame\\game.exe",
+    "pathPlaceholderLinux": "e.g. /usr/games/mygame"
   },
   "monitor": {
     "labelPrimary": "PRIMARY",
@@ -90,10 +98,19 @@
     "defaultHzHint": "· otherwise",
     "hzWarning": "Game Hz should be >= Default Hz.",
     "saved": "Saved.",
-    "testBtn": "Test 5 sec.",
+    "testBtn": "Test {{seconds}} sec.",
     "testing": "Testing…",
     "saveBtn": "Save",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "backendError": {
+      "title": "Monitors cannot be controlled",
+      "wayland_unsupported": "This Wayland session ({{detail}}) is not supported. Refresh rates can only be changed on GNOME, KDE Plasma, or in an X11 session.",
+      "kde_tool_missing": "KDE Plasma on Wayland needs “{{detail}}”. Install the “kscreen” package and restart the app.",
+      "xrandr_missing": "“{{detail}}” was not found or could not reach the X server. Install the “x11-xserver-utils” / “xrandr” package.",
+      "no_monitors": "No active monitor was found.",
+      "generic": "The display configuration of this session cannot be read ({{detail}})."
+    },
+    "testFailed": "Testing {{hz}} Hz failed"
   },
   "settings": {
     "updateAvailable": "Update available – v{{version}}",
