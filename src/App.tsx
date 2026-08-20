@@ -8,7 +8,7 @@ import { ProcessList } from "./components/ProcessList";
 import { SettingsTab } from "./components/SettingsTab";
 import { StatusView } from "./components/StatusView";
 import type { WatchConfig } from "./types";
-import { useHzStatus } from "./useHzStatus";
+import { clearHzError, useHzStatus } from "./useHzStatus";
 
 type Tab = "status" | "processes" | "monitor" | "settings";
 
@@ -135,7 +135,11 @@ export default function App() {
 
   // Single source of truth for Hz + running set, shared with StatusView so the
   // header pill and the status badge can never disagree.
-  const { currentHz: headerHz, running } = useHzStatus(config.monitor_name);
+  const {
+    currentHz: headerHz,
+    running,
+    lastError,
+  } = useHzStatus(config.monitor_name);
   const gameMode = active && running.length > 0;
 
   useEffect(() => {
@@ -280,6 +284,28 @@ export default function App() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto bg-white dark:bg-[#1c1c1c] border-t border-black/8 dark:border-white/8">
+        {/* A refused Hz switch leaves the monitor on the wrong rate, which is
+            invisible otherwise — so it is shown on every tab, not just the
+            monitor one. */}
+        {lastError && (
+          <div className="mx-5 mt-5 flex items-start gap-3 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-red-700 dark:text-red-300">
+                {t("app.hzErrorTitle", { hz: lastError.target_hz })}
+              </div>
+              <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5 wrap-break-word select-text">
+                {lastError.error}
+              </div>
+            </div>
+            <button
+              onClick={clearHzError}
+              aria-label={t("app.dismiss")}
+              className="shrink-0 text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-200 text-lg leading-none px-1"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="p-5">
           <div key={`tab-${tab}`} className="tab-content">
             {tab === "status" && (

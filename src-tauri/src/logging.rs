@@ -52,7 +52,41 @@ fn timestamp() -> String {
     )
 }
 
-#[cfg(not(windows))]
+/// Local time via glib, which comes in with GTK and is therefore already a
+/// dependency here — the standard library has no local-time conversion, and a
+/// log of Hz switches without wall-clock times can't be read against what the
+/// user saw happen.
+#[cfg(target_os = "linux")]
 fn timestamp() -> String {
-    String::new()
+    let Ok(now) = gtk::glib::DateTime::now_local() else {
+        return String::new();
+    };
+    match now.format("%Y-%m-%d %H:%M:%S") {
+        Ok(s) => format!("{s}.{:03}", now.microsecond() / 1000),
+        Err(_) => String::new(),
+    }
+}
+
+#[cfg(all(test, any(windows, target_os = "linux")))]
+mod tests {
+    /// The log is read against a clock, so the platform-specific implementations
+    /// have to agree on one wall-clock format: `2026-08-15 12:34:56.789`.
+    #[test]
+    fn timestamp_is_a_local_wall_clock_time() {
+        let ts = super::timestamp();
+        assert_eq!(ts.len(), 23, "unexpected timestamp format: '{ts}'");
+        assert_eq!(ts.as_bytes()[10], b' ');
+        assert_eq!(ts.as_bytes()[19], b'.');
+        assert!(ts.starts_with("20"), "unexpected year in '{ts}'");
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn timestamp() -> String {
+    // No local-time source on a platform we don't otherwise support; seconds
+    // since the epoch at least keeps the lines ordered and comparable.
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => format!("{}.{:03}", d.as_secs(), d.subsec_millis()),
+        Err(_) => String::new(),
+    }
 }

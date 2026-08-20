@@ -1,7 +1,9 @@
 {
   "app": {
     "subtitle": "Automatischer Wechsel der Bildwiederholrate",
-    "active": "Aktiv"
+    "active": "Aktiv",
+    "hzErrorTitle": "Wechsel auf {{hz}} Hz fehlgeschlagen",
+    "dismiss": "Ausblenden"
   },
   "tabs": {
     "status": "Status",
@@ -38,8 +40,10 @@
   "processes": {
     "addTitle": "Prozess hinzufügen",
     "addHint": "Name, Pfad oder .exe wählen",
+    "addHintLinux": "Name oder Pfad wählen",
     "pickRunning": "Aus laufenden Prozessen wählen",
     "inputPlaceholder": "Prozessname (z. B. game.exe)  oder  Pfad zur .exe",
+    "inputPlaceholderLinux": "Prozessname (z. B. hl2_linux)  oder  Pfad zum Programm",
     "browse": "Durchsuchen",
     "add": "Hinzufügen",
     "watchedHeader": "Überwachte Prozesse ({{count}})",
@@ -48,6 +52,7 @@
     "editTitle": "Bearbeiten",
     "removeTitle": "Entfernen",
     "notFound": "Diese EXE-Datei wurde nicht gefunden.",
+    "notFoundLinux": "Diese Programmdatei wurde nicht gefunden.",
     "pickerTitle": "Aus laufenden Prozessen wählen",
     "pickerHint": "Klick fügt den Prozess direkt hinzu",
     "pickerSearch": "Laufende Prozesse durchsuchen...",
@@ -61,6 +66,7 @@
     "save": "Speichern",
     "browseExeFilter": "Ausführbare Datei",
     "browseExeTitle": "EXE-Datei auswählen",
+    "browseExeTitleLinux": "Programm auswählen",
     "timesRun_one": "{{count}} mal ausgeführt",
     "timesRun_other": "{{count}} mal ausgeführt",
     "agoJustNow": "gerade eben",
@@ -70,7 +76,9 @@
     "lastSeenWithCount": "{{countStr}} · {{ago}}",
     "lastSeenAgoOnly": "{{ago}}",
     "namePlaceholder": "prozessname.exe",
-    "pathPlaceholder": "z.B. C:\\Games\\MeinSpiel\\game.exe"
+    "namePlaceholderLinux": "prozessname",
+    "pathPlaceholder": "z.B. C:\\Games\\MeinSpiel\\game.exe",
+    "pathPlaceholderLinux": "z.B. /usr/games/meinspiel"
   },
   "monitor": {
     "labelPrimary": "PRIMARY",
@@ -90,10 +98,19 @@
     "defaultHzHint": "· sonst",
     "hzWarning": "Game-Hz sollte >= Standard-Hz sein.",
     "saved": "Gespeichert.",
-    "testBtn": "5 Sek. testen",
+    "testBtn": "{{seconds}} Sek. testen",
     "testing": "Testet…",
     "saveBtn": "Speichern",
-    "saving": "Speichere…"
+    "saving": "Speichere…",
+    "backendError": {
+      "title": "Monitore können nicht gesteuert werden",
+      "wayland_unsupported": "Diese Wayland-Sitzung ({{detail}}) wird nicht unterstützt. Bildwiederholraten lassen sich nur unter GNOME, KDE Plasma oder in einer X11-Sitzung ändern.",
+      "kde_tool_missing": "Unter KDE Plasma auf Wayland wird „{{detail}}“ benötigt. Installiere das Paket „kscreen“ und starte die App neu.",
+      "xrandr_missing": "„{{detail}}“ wurde nicht gefunden oder konnte den X-Server nicht erreichen. Installiere das Paket „x11-xserver-utils“ bzw. „xrandr“.",
+      "no_monitors": "Es wurde kein aktiver Monitor gefunden.",
+      "generic": "Die Anzeigekonfiguration dieser Sitzung kann nicht gelesen werden ({{detail}})."
+    },
+    "testFailed": "Test mit {{hz}} Hz fehlgeschlagen"
   },
   "settings": {
     "updateAvailable": "Update verfügbar – v{{version}}",

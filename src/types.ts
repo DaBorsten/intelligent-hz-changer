@@ -51,6 +51,23 @@ export interface HzChangedPayload {
   event_type?: "process_start" | "process_stop" | "system";
 }
 
+/** A refresh-rate switch the backend attempted and the display driver refused. */
+export interface HzErrorPayload {
+  monitor: string;
+  target_hz: number;
+  reason: string;
+  error: string;
+}
+
+/** Whether the platform's display backend can be talked to at all. */
+export interface BackendStatus {
+  ok: boolean;
+  /** Stable identifier translated under `monitor.backendError.*`. */
+  code: string;
+  /** Untranslated specifics (desktop name, missing binary) to interpolate. */
+  detail: string;
+}
+
 export interface LogEntry {
   id: number;
   timestamp: string;

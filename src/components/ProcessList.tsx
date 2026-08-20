@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { isWindows, looksLikeExecutablePath, platformKey } from "../platform";
 import type { WatchedProcess } from "../types";
 import { wpKey, wpName } from "../types";
 
@@ -188,9 +189,12 @@ export function ProcessList({ processes, onChange }: Props) {
 
   async function browseExe(onPick: (path: string, filename: string) => void) {
     const selected = await openDialog({
-      filters: [{ name: t("processes.browseExeFilter"), extensions: ["exe"] }],
+      // Linux executables have no extension to filter on.
+      filters: isWindows
+        ? [{ name: t("processes.browseExeFilter"), extensions: ["exe"] }]
+        : undefined,
       multiple: false,
-      title: t("processes.browseExeTitle"),
+      title: t(platformKey("processes.browseExeTitle")),
     });
     if (!selected || typeof selected !== "string") return;
     onPick(selected, filenameFromPath(selected));
@@ -201,9 +205,12 @@ export function ProcessList({ processes, onChange }: Props) {
     if (!raw) return;
     setAddError("");
     // ponytail: path if contains separator, else just name
-    const isPath = raw.includes("\\") || raw.includes("/");
+    const isPath = raw.includes("/") || (isWindows && raw.includes("\\"));
     let normalized = raw;
-    if (!normalized.toLowerCase().endsWith(".exe")) normalized += ".exe";
+    // Only Windows names an executable by its extension.
+    if (isWindows && !normalized.toLowerCase().endsWith(".exe")) {
+      normalized += ".exe";
+    }
     const name = isPath
       ? (normalized.replace(/\\/g, "/").split("/").pop() ?? normalized)
       : normalized;
@@ -213,7 +220,7 @@ export function ProcessList({ processes, onChange }: Props) {
         path: normalized,
       });
       if (!exists) {
-        setAddError(t("processes.notFound"));
+        setAddError(t(platformKey("processes.notFound")));
         return;
       }
     }
@@ -250,7 +257,7 @@ export function ProcessList({ processes, onChange }: Props) {
   function handleEditPathChange(path: string) {
     setEditPath(path);
     setEditPathError("");
-    if (path.trim().toLowerCase().endsWith(".exe")) {
+    if (looksLikeExecutablePath(path)) {
       const filename = filenameFromPath(path.trim());
       if (filename) setEditName(filename);
     }
@@ -261,10 +268,10 @@ export function ProcessList({ processes, onChange }: Props) {
     const name = editName.trim();
     if (!name) return;
     const path = editPath.trim();
-    if (path.toLowerCase().endsWith(".exe")) {
+    if (looksLikeExecutablePath(path)) {
       const exists = await invoke<boolean>("check_exe_exists", { path });
       if (!exists) {
-        setEditPathError(t("processes.notFound"));
+        setEditPathError(t(platformKey("processes.notFound")));
         return;
       }
     }
@@ -324,7 +331,10 @@ export function ProcessList({ processes, onChange }: Props) {
   const filteredPicker = pickerList.filter((p) =>
     p.name.toLowerCase().includes(pickerSearch.toLowerCase()),
   );
-  const editPathIsExe = editPath.trim().toLowerCase().endsWith(".exe");
+  // A Windows process is always named after its exe, so picking a path fully
+  // determines the name. Linux reports `comm`, which can differ from the file's
+  // basename (shell scripts, Proton-wrapped games), so the name stays editable.
+  const nameLocked = isWindows && looksLikeExecutablePath(editPath);
 
   return (
     <>
@@ -337,7 +347,7 @@ export function ProcessList({ processes, onChange }: Props) {
                 {t("processes.addTitle")}
               </h2>
               <span className="text-xs text-slate-400 dark:text-slate-500">
-                {t("processes.addHint")}
+                {t(platformKey("processes.addHint"))}
               </span>
             </div>
             <button
@@ -370,7 +380,7 @@ export function ProcessList({ processes, onChange }: Props) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
-                placeholder={t("processes.inputPlaceholder")}
+                placeholder={t(platformKey("processes.inputPlaceholder"))}
                 className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
                            text-sm font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none
                            focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all"
@@ -378,7 +388,7 @@ export function ProcessList({ processes, onChange }: Props) {
             </div>
             <button
               onClick={() => void browseExe((path) => setInput(path))}
-              title={t("processes.browseExeTitle")}
+              title={t(platformKey("processes.browseExeTitle"))}
               className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-[#333] text-sm transition-colors btn-press"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -812,22 +822,20 @@ export function ProcessList({ processes, onChange }: Props) {
                   {t("processes.processName")}
                 </label>
                 <input
-                  autoFocus={!editPathIsExe}
+                  autoFocus={!nameLocked}
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  readOnly={editPathIsExe}
+                  readOnly={nameLocked}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void commitEditDialog();
                     if (e.key === "Escape") closeEditDialog();
                   }}
-                  placeholder={t("processes.namePlaceholder")}
+                  placeholder={t(platformKey("processes.namePlaceholder"))}
                   className={`w-full px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
                            text-sm font-mono text-slate-800 dark:text-slate-100 outline-none
                            focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all ${
-                             editPathIsExe
-                               ? "cursor-not-allowed opacity-75"
-                               : ""
+                             nameLocked ? "cursor-not-allowed opacity-75" : ""
 }`}
                 />
               </div>
@@ -845,7 +853,7 @@ export function ProcessList({ processes, onChange }: Props) {
                       if (e.key === "Enter") void commitEditDialog();
                       if (e.key === "Escape") closeEditDialog();
                     }}
-                    placeholder={t("processes.pathPlaceholder")}
+                    placeholder={t(platformKey("processes.pathPlaceholder"))}
                     className={`flex-1 px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border rounded-xl
                              text-xs font-mono text-slate-600 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 outline-none
                              focus:ring-2 transition-all ${
@@ -861,7 +869,7 @@ export function ProcessList({ processes, onChange }: Props) {
                         if (filename) setEditName(filename);
                       })
                     }
-                    title={t("processes.browseExeTitle")}
+                    title={t(platformKey("processes.browseExeTitle"))}
                     className="px-3 py-2 rounded-xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#333] transition-colors btn-press"
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
