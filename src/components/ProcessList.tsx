@@ -836,7 +836,7 @@ export function ProcessList({ processes, onChange }: Props) {
                            text-sm font-mono text-slate-800 dark:text-slate-100 outline-none
                            focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all ${
                              nameLocked ? "cursor-not-allowed opacity-75" : ""
-}`}
+                           }`}
                 />
               </div>
 
@@ -860,7 +860,7 @@ export function ProcessList({ processes, onChange }: Props) {
                                editPathError
                                  ? "border-red-400 focus:border-red-400 focus:ring-red-100 dark:focus:ring-red-900/20"
                                  : "border-black/8 dark:border-white/8 focus:border-red-400 focus:ring-red-100 dark:focus:ring-red-900/20"
-}`}
+                             }`}
                   />
                   <button
                     onClick={() =>

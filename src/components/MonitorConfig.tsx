@@ -210,13 +210,14 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
 
   // Enumerating monitors builds a COM/WMI connection and walks every display
   // mode, so it runs once on mount rather than on every config/onChange change.
-  const hasMonitorName = !!config.monitor_name;
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  // hasMonitorName is read for the initial-selection branch only; re-running on
+  // Only the mount-time value matters for the initial selection; re-running on
   // it would re-enumerate right after we set the name.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design
+  const hadMonitorNameAtMount = useRef(!!config.monitor_name);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
   useEffect(() => {
     invoke<number>("get_test_seconds")
       .then(setTestSeconds)
@@ -227,7 +228,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     invoke<MonitorInfoExtended[]>("get_monitors_extended")
       .then((mons) => {
         setMonitors(mons);
-        if (!hasMonitorName && mons.length > 0) {
+        if (!hadMonitorNameAtMount.current && mons.length > 0) {
           const initial = mons.find((m) => m.is_primary) ?? mons[0];
           onChangeRef.current({ monitor_name: initial.device_name });
         }

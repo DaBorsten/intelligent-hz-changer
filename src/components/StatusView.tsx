@@ -2,14 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-  HzChangedPayload,
   HzPoint,
   LogEntry,
   MonitorInfoExtended,
   WatchedProcess,
 } from "../types";
 import { wpKey, wpName } from "../types";
-import { useHzStatus } from "../useHzStatus";
+import { onHzChanged, useHzStatus } from "../useHzStatus";
 
 interface Props {
   monitorName: string;
@@ -56,15 +55,13 @@ export function StatusView({
   active,
 }: Props) {
   const { t, i18n } = useTranslation();
-  const {
-    currentHz,
-    running: runningProcesses,
-    lastEvent,
-  } = useHzStatus(monitorName);
+  const { currentHz, running: runningProcesses } = useHzStatus(monitorName);
   const [monitorLabel, setMonitorLabel] = useState<string>("");
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logFilter, setLogFilter] = useState<"all" | "hz" | "process">("all");
-  const [hzHistory, setHzHistory] = useState<HzPoint[]>([]);
+  const [hzHistory, setHzHistory] = useState<HzPoint[]>(() =>
+    currentHz == null ? [] : [{ time: Date.now(), hz: currentHz }],
+  );
   const [now, setNow] = useState(() => Date.now());
   const [todaySwitches, setTodaySwitches] = useState(0);
   const [processIcons, setProcessIcons] = useState<
@@ -79,59 +76,63 @@ export function StatusView({
     // ponytail: disabled means we change nothing, so the badge stays STANDARD.
     active && runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
-  // The store outlives this component, so on a remount `lastEvent` still holds
-  // the event logged before unmount. Seeding the ref with whatever is current at
-  // mount makes the first effect run a no-op and keeps tab switches from
-  // re-logging it and re-counting the switch.
-  const loggedEvent = useRef<HzChangedPayload | null>(lastEvent);
-
-  // Append one log entry per hz-changed event. Keyed on the event object, which
-  // the store replaces only when a new event arrives — a language switch
-  // re-renders without re-logging or dropping the subscription.
-  useEffect(() => {
-    if (!lastEvent || lastEvent === loggedEvent.current) return;
-    loggedEvent.current = lastEvent;
-    const timestamp = new Date().toLocaleTimeString(i18n.language, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setLog((prev) =>
-      [
-        {
-          id: ++logIdCounter,
-          timestamp,
-          message: lastEvent.reason,
-          hz_from: lastEvent.hz_from,
-          hz_to: lastEvent.hz_to,
-          process_name: lastEvent.process_name,
-          event_type: lastEvent.event_type ?? "system",
-        } as LogEntry,
-        ...prev,
-      ].slice(0, 50),
-    );
-    // Only real process edges count as an automatic switch; "system" covers the
-    // startup ping, pause/resume and config saves.
-    if (lastEvent.event_type && lastEvent.event_type !== "system") {
-      setTodaySwitches((n) => n + 1);
-    }
-    // i18n.language can stay a dependency: the ref guard above makes a re-run
-    // for anything but a genuinely new event a no-op.
-  }, [lastEvent, i18n.language]);
+  // Append one log entry per hz-changed event. Only events arriving while
+  // mounted are delivered, so a tab switch doesn't re-log or re-count the last
+  // one.
+  useEffect(
+    () =>
+      onHzChanged((event) => {
+        const timestamp = new Date().toLocaleTimeString(i18n.language, {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        setLog((prev) =>
+          [
+            {
+              id: ++logIdCounter,
+              timestamp,
+              message: event.reason,
+              hz_from: event.hz_from,
+              hz_to: event.hz_to,
+              process_name: event.process_name,
+              event_type: event.event_type ?? "system",
+            } as LogEntry,
+            ...prev,
+          ].slice(0, 50),
+        );
+        // Only real process edges count as an automatic switch; "system" covers
+        // the startup ping, pause/resume and config saves.
+        if (event.event_type && event.event_type !== "system") {
+          setTodaySwitches((n) => n + 1);
+        }
+      }),
+    [i18n],
+  );
 
   // Track Hz over time for the sparkline, trimmed to the displayed hour.
-  useEffect(() => {
-    if (currentHz == null) return;
-    const timestamp = Date.now();
-    setNow(timestamp);
-    setHzHistory((prev) => {
-      const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
-      const last = filtered[filtered.length - 1];
-      // The 5 s poll re-reports an unchanged rate; only the newest sample needs
-      // to move so the line extends to "now" without unbounded growth.
-      if (last && last.hz === currentHz) return filtered;
-      return [...filtered, { time: timestamp, hz: currentHz }];
-    });
-  }, [currentHz]);
+  // Adjusted during render rather than in an effect, so the new sample lands in
+  // the same render as the new rate.
+  const [trackedHz, setTrackedHz] = useState(currentHz);
+  if (currentHz !== trackedHz) {
+    setTrackedHz(currentHz);
+    if (currentHz != null) {
+      setHzHistory((prev) => {
+        const timestamp = Date.now();
+        const filtered = prev.filter((p) => p.time >= timestamp - 3_600_000);
+        const last = filtered[filtered.length - 1];
+        // Returning to the same rate after a monitor switch (null in between)
+        // needs no new point; the line already extends to "now".
+        if (last && last.hz === currentHz) return filtered;
+        return [...filtered, { time: timestamp, hz: currentHz }];
+      });
+    }
+  }
+
+  // A sample can be newer than the last tick; the right edge must not lag it.
+  const sparklineNow = Math.max(
+    now,
+    hzHistory[hzHistory.length - 1]?.time ?? 0,
+  );
 
   // Keep the sparkline's right edge moving even while Hz holds steady.
   useEffect(() => {
@@ -266,7 +267,7 @@ export function StatusView({
               {monitorLabel}
             </p>
           )}
-          <Sparkline points={hzHistory} mode={mode} now={now} />
+          <Sparkline points={hzHistory} mode={mode} now={sparklineNow} />
           <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
             <span>{t("status.lastHour")}</span>
             <span>

@@ -1,20 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { HzChangedPayload, HzErrorPayload } from "./types";
 
 /** Latest Hz + running watched keys, shared by the header and the status view. */
 export interface HzStatus {
   currentHz: number | null;
   running: string[];
-  /** Increments on every hz-changed event so consumers can react to one. */
-  lastEvent: HzChangedPayload | null;
   /** The most recent switch the display driver refused, until it is either
    * dismissed or superseded by a switch that worked. */
   lastError: HzErrorPayload | null;
 }
 
-type Listener = (s: HzStatus) => void;
+type Listener = () => void;
+type EventListener = (event: HzChangedPayload) => void;
 
 // ponytail: one module-level store instead of a context provider — there is
 // exactly one backend to poll, and two components that need it. A provider adds
@@ -22,10 +21,10 @@ type Listener = (s: HzStatus) => void;
 let state: HzStatus = {
   currentHz: null,
   running: [],
-  lastEvent: null,
   lastError: null,
 };
 const listeners = new Set<Listener>();
+const eventListeners = new Set<EventListener>();
 let monitorName = "";
 let timer: ReturnType<typeof setInterval> | null = null;
 const unlisteners: (() => void)[] = [];
@@ -37,7 +36,7 @@ let generation = 0;
 
 function emit(next: Partial<HzStatus>) {
   state = { ...state, ...next };
-  for (const l of listeners) l(state);
+  for (const l of listeners) l();
 }
 
 function refresh() {
@@ -70,9 +69,9 @@ function start() {
     // A switch that worked answers whatever the last failed one reported.
     emit({
       currentHz: e.payload.current_hz,
-      lastEvent: e.payload,
       lastError: null,
     });
+    for (const l of eventListeners) l(e.payload);
     // The event says what we set; the running set says which mode we're in.
     invoke<string[]>("get_running_watched")
       .then((running) => emit({ running }))
@@ -100,13 +99,35 @@ export function clearHzError() {
   emit({ lastError: null });
 }
 
+function subscribe(listener: Listener) {
+  listeners.add(listener);
+  if (listeners.size === 1) start();
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) stop();
+  };
+}
+
+function getSnapshot() {
+  return state;
+}
+
+/**
+ * Calls `listener` once per hz-changed event that arrives while the poller runs.
+ * Events that arrived before subscribing are not replayed.
+ */
+export function onHzChanged(listener: EventListener) {
+  eventListeners.add(listener);
+  return () => {
+    eventListeners.delete(listener);
+  };
+}
+
 /**
  * Subscribes to the shared Hz status. Pass the configured monitor; the first
  * subscriber starts the single poller, the last one stops it.
  */
 export function useHzStatus(monitor?: string): HzStatus {
-  const [snapshot, setSnapshot] = useState(state);
-
   useEffect(() => {
     if (monitor !== undefined && monitor !== monitorName) {
       monitorName = monitor;
@@ -116,16 +137,5 @@ export function useHzStatus(monitor?: string): HzStatus {
     }
   }, [monitor]);
 
-  useEffect(() => {
-    const listener: Listener = (s) => setSnapshot(s);
-    listeners.add(listener);
-    if (listeners.size === 1) start();
-    else setSnapshot(state);
-    return () => {
-      listeners.delete(listener);
-      if (listeners.size === 0) stop();
-    };
-  }, []);
-
-  return snapshot;
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
