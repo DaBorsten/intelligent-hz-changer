@@ -12,6 +12,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "Intelligent Hz Changer",
         "width": 1080,
         "height": 720,

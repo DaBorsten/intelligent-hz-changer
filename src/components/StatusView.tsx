@@ -2,12 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
+  HzChangedPayload,
   HzPoint,
   LogEntry,
   MonitorInfoExtended,
   WatchedProcess,
 } from "../types";
 import { wpKey, wpName } from "../types";
+import { deviceTag } from "../monitors";
 import { onHzChanged, useHzStatus } from "../useHzStatus";
 
 interface Props {
@@ -17,7 +19,6 @@ interface Props {
   active: boolean;
 }
 
-let logIdCounter = 0;
 const ICON_CACHE_KEY = "hz-process-icons";
 
 function loadIconCache(): Record<string, string | undefined> {
@@ -63,7 +64,6 @@ export function StatusView({
     currentHz == null ? [] : [{ time: Date.now(), hz: currentHz }],
   );
   const [now, setNow] = useState(() => Date.now());
-  const [todaySwitches, setTodaySwitches] = useState(0);
   const [processIcons, setProcessIcons] = useState<
     Record<string, string | null | undefined>
   >(() => loadIconCache());
@@ -76,38 +76,81 @@ export function StatusView({
     // ponytail: disabled means we change nothing, so the badge stays STANDARD.
     active && runningProcesses.length > 0 ? "GAME" : "STANDARD";
 
-  // Append one log entry per hz-changed event. Only events arriving while
-  // mounted are delivered, so a tab switch doesn't re-log or re-count the last
-  // one.
-  useEffect(
-    () =>
-      onHzChanged((event) => {
-        const timestamp = new Date().toLocaleTimeString(i18n.language, {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        setLog((prev) =>
-          [
-            {
-              id: ++logIdCounter,
-              timestamp,
-              message: event.reason,
-              hz_from: event.hz_from,
-              hz_to: event.hz_to,
-              process_name: event.process_name,
-              event_type: event.event_type ?? "system",
-            } as LogEntry,
-            ...prev,
-          ].slice(0, 50),
-        );
-        // Only real process edges count as an automatic switch; "system" covers
-        // the startup ping, pause/resume and config saves.
-        if (event.event_type && event.event_type !== "system") {
-          setTodaySwitches((n) => n + 1);
-        }
+  // The backend keeps the recent events, since this window is destroyed while
+  // the app sits in the tray. Seed from it on mount, then append live events;
+  // `id` is unique per event, so one that arrives both ways is kept once.
+  useEffect(() => {
+    const toEntry = (event: HzChangedPayload): LogEntry => ({
+      id: event.id,
+      time: event.time,
+      timestamp: new Date(event.time).toLocaleTimeString(i18n.language, {
+        hour: "2-digit",
+        minute: "2-digit",
       }),
-    [i18n],
-  );
+      message: event.reason,
+      hz_from: event.hz_from,
+      hz_to: event.hz_to,
+      process_name: event.process_name,
+      event_type: event.event_type ?? "system",
+      monitor: event.monitor,
+      batch: event.batch,
+    });
+    const merge = (incoming: LogEntry[]) =>
+      setLog((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        return [...prev, ...incoming.filter((e) => !seen.has(e.id))]
+          .sort((a, b) => b.id - a.id)
+          .slice(0, 50);
+      });
+
+    let cancelled = false;
+    invoke<HzChangedPayload[]>("get_hz_log")
+      .then((events) => {
+        if (cancelled) return;
+        merge(events.map(toEntry));
+        const cutoff = Date.now() - 3_600_000;
+        const points = events
+          .filter(
+            (e) =>
+              e.time >= cutoff &&
+              e.hz_to != null &&
+              (!e.monitor || e.monitor === monitorName),
+          )
+          .map((e) => ({ time: e.time, hz: e.hz_to as number }));
+        setHzHistory((prev) => {
+          const seen = new Set(prev.map((p) => p.time));
+          return [...points.filter((p) => !seen.has(p.time)), ...prev].sort(
+            (a, b) => a.time - b.time,
+          );
+        });
+      })
+      .catch(() => undefined);
+    const off = onHzChanged((event) => merge([toEntry(event)]));
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [i18n, monitorName]);
+
+  // Only real process edges count as an automatic switch; "system" covers
+  // the startup ping, pause/resume and config saves.
+  const todaySwitches = useMemo(() => {
+    // One game start that switched several monitors is still one switch.
+    const today = new Date().toDateString();
+    return new Set(
+      log
+        .filter(
+          (e) =>
+            e.event_type !== "system" &&
+            new Date(e.time).toDateString() === today,
+        )
+        .map((e) => e.batch ?? -e.id),
+    ).size;
+  }, [log]);
+
+  // Name the monitor per entry only once there is more than one to tell apart.
+  const multiMonitorLog =
+    new Set(log.map((e) => e.monitor).filter(Boolean)).size > 1;
 
   // Track Hz over time for the sparkline, trimmed to the displayed hour.
   // Adjusted during render rather than in an effect, so the new sample lands in
@@ -449,6 +492,14 @@ export function StatusView({
                 <span className="flex-1 text-slate-700 dark:text-slate-300 truncate">
                   {entry.message}
                 </span>
+                {multiMonitorLog && entry.monitor && (
+                  <span
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                    title={entry.monitor}
+                  >
+                    {t("status.monitorTag", { n: deviceTag(entry.monitor) })}
+                  </span>
+                )}
                 {entry.hz_from != null && entry.hz_to != null && (
                   <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 tabular-nums font-mono">
                     {entry.hz_from} → {entry.hz_to} Hz

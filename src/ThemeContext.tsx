@@ -1,16 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef, useState } from "react";
-import { type Theme, ThemeContext } from "./theme";
-
-/** Caches the last value the backend resolved "system" to, so the next
- * startup can paint the right theme immediately instead of flashing light
- * (the default) until the async `set_window_theme` call comes back. */
-const RESOLVED_KEY = "hz-theme-resolved";
-
-function getMediaQueryDark(): boolean {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
+import {
+  RESOLVED_KEY,
+  storedSystemDark,
+  storedTheme,
+  type Theme,
+  ThemeContext,
+} from "./theme";
 
 /** Resolves `theme` on the native window and reports which side it landed
  * on. `null` means the platform's own `prefers-color-scheme` is trustworthy
@@ -25,14 +22,9 @@ function applyTauriTheme(theme: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem("hz-theme") as Theme | null) ?? "system",
-  );
+  const [theme, setThemeState] = useState<Theme>(storedTheme);
 
-  const [systemDark, setSystemDark] = useState(() => {
-    const cached = localStorage.getItem(RESOLVED_KEY);
-    return cached ? cached === "dark" : getMediaQueryDark();
-  });
+  const [systemDark, setSystemDark] = useState(storedSystemDark);
 
   // The last value we told (or were told) the resolved theme is. Lets the
   // onThemeChanged listener below tell an OS-driven switch apart from the

@@ -12,11 +12,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::tray::TrayIconId;
-use tauri::{Emitter, Manager, Theme, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, Theme};
 use tauri_plugin_notification::NotificationExt;
 
 use display::MonitorInfoExtended;
-use process_watcher::{WatchConfig, WatchState, WatchedProcess};
+use process_watcher::{WatchConfig, WatchState};
 
 /// Bumped by every `save_config`. The spawned apply-thread compares against it
 /// after its slow reconcile so only the newest save touches the refresh rate.
@@ -186,7 +186,7 @@ fn load_config(app: tauri::AppHandle) -> Result<WatchConfig, String> {
 
     if path.exists() {
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&json).map_err(|e| e.to_string())
+        WatchConfig::parse(&json).map_err(|e| e.to_string())
     } else {
         Ok(WatchConfig::default())
     }
@@ -194,22 +194,10 @@ fn load_config(app: tauri::AppHandle) -> Result<WatchConfig, String> {
 
 #[tauri::command]
 fn save_config(
-    watched_processes: Vec<WatchedProcess>,
-    monitor_name: String,
-    game_hz: u32,
-    default_hz: u32,
-    monitor_settings: Option<HashMap<String, process_watcher::MonitorHz>>,
+    config: WatchConfig,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config = WatchConfig {
-        watched_processes,
-        monitor_name,
-        game_hz,
-        default_hz,
-        monitor_settings: monitor_settings.unwrap_or_default(),
-    };
-
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
@@ -280,17 +268,16 @@ fn set_enabled(
     if value {
         watcher::sync_hz(&state.watch_state, &app, "Aktiviert".into(), None, "system");
     } else {
-        let (monitor, def) = {
-            let cfg = state.watch_state.config.lock().unwrap_or_else(|e| e.into_inner());
-            let m = cfg.monitor_name.clone();
-            let d = cfg.default_hz_for(&m);
-            (m, d)
-        };
-        watcher::set_monitor_hz(
+        let defaults = state
+            .watch_state
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .hz_targets(&[]);
+        watcher::apply_targets(
             &state.watch_state,
             &app,
-            &monitor,
-            def,
+            &defaults,
             "Pausiert".into(),
             None,
             "system",
@@ -345,6 +332,126 @@ fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(path.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_hz_log() -> Vec<serde_json::Value> {
+    watcher::hz_log()
+}
+
+/// Shows the main window, creating it first if it doesn't exist. The window is
+/// destroyed rather than hidden while the app sits in the tray, so its webview
+/// (by far the largest share of the app's memory) isn't kept alive for nothing.
+fn show_main_window(app: &tauri::AppHandle) {
+    // Still loading: it reveals itself once the page is ready, and showing it
+    // now would put the blank webview on screen.
+    if MAIN_WINDOW_LOADING.load(Ordering::Acquire) {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    // Building a webview from a menu/tray handler deadlocks on Windows
+    // (WebView2 needs the event loop those handlers run on), so do it off-thread.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _ = create_main_window(&app);
+    });
+}
+
+/// Set from the moment the main window is being built until its page has
+/// loaded. Keeps a second tray click or instance launch from building it twice
+/// or revealing it half-loaded.
+static MAIN_WINDOW_LOADING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main") else {
+        return Ok(());
+    };
+    if MAIN_WINDOW_LOADING.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    let res = build_main_window(app, config);
+    if res.is_err() {
+        MAIN_WINDOW_LOADING.store(false, Ordering::Release);
+    }
+    res
+}
+
+fn build_main_window(app: &tauri::AppHandle, config: &tauri::utils::config::WindowConfig) -> tauri::Result<()> {
+    use tauri::webview::PageLoadEvent;
+    use tauri::window::Color;
+
+    // A fresh webview paints white until the page's own background lands. Match
+    // the page background (index.css `body`) up front so dark mode never flashes.
+    let dark = prefers_dark(app);
+    let (theme, background) = if dark {
+        (Theme::Dark, Color(0x14, 0x14, 0x14, 0xff))
+    } else {
+        (Theme::Light, Color(0xf0, 0xee, 0xeb, 0xff))
+    };
+    tauri::WebviewWindowBuilder::from_config(app, config)?
+        .theme(Some(theme))
+        .background_color(background)
+        // The window is created hidden (`visible: false`); reveal it once the
+        // page has loaded, so its first visible frame is the rendered UI.
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                MAIN_WINDOW_LOADING.store(false, Ordering::Release);
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
+        .build()?;
+    Ok(())
+}
+
+/// Whether the window should open dark: the user's theme setting, with
+/// "system" resolved against the OS preference.
+fn prefers_dark(app: &tauri::AppHandle) -> bool {
+    match read_settings(app).theme.as_str() {
+        "dark" => true,
+        "light" => false,
+        _ => {
+            #[cfg(windows)]
+            {
+                windows_prefers_dark()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                linux_theme::system_theme() == Some(Theme::Dark)
+            }
+            #[cfg(not(any(windows, target_os = "linux")))]
+            {
+                false
+            }
+        }
+    }
+}
+
+/// Reads the "app mode" from Settings → Personalization → Colors.
+#[cfg(windows)]
+fn windows_prefers_dark() -> bool {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+
+    let mut value: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let res = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+    res.is_ok() && value == 0
 }
 
 #[tauri::command]
@@ -681,7 +788,7 @@ fn load_config_from_disk(app: &tauri::AppHandle) -> WatchConfig {
     };
     let path = dir.join("config.json");
     if let Ok(json) = std::fs::read_to_string(path) {
-        serde_json::from_str(&json).unwrap_or_default()
+        WatchConfig::parse(&json).unwrap_or_default()
     } else {
         WatchConfig::default()
     }
@@ -740,12 +847,7 @@ pub fn run() {
                         // set_enabled already emits "enabled-changed" itself.
                         let _ = set_enabled(new_val, state, app.clone());
                     }
-                    "open" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
+                    "open" => show_main_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -757,6 +859,8 @@ pub fn run() {
             #[cfg(not(target_os = "linux"))]
             {
                 tray_builder = tray_builder
+                    // Left click opens the window; the menu is right-click only.
+                    .show_menu_on_left_click(false)
                     .tooltip(if app_settings.enabled {
                         "Intelligent Hz Changer – aktiv"
                     } else {
@@ -769,11 +873,7 @@ pub fn run() {
                             ..
                         } = event
                         {
-                            let app = tray.app_handle();
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
+                            show_main_window(tray.app_handle());
                         }
                     });
             }
@@ -782,25 +882,9 @@ pub fn run() {
             }
             let _tray = tray_builder.build(app)?;
 
-            // Conditionally hide to tray or quit on window close
-            if let Some(window) = app.get_webview_window("main") {
-                let w = window.clone();
-                let app_h = app.handle().clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        let state = app_h.state::<AppState>();
-                        let to_tray = state.close_to_tray.load(std::sync::atomic::Ordering::Relaxed);
-                        if to_tray {
-                            api.prevent_close();
-                            let _ = w.hide();
-                        }
-                    }
-                });
-            }
-
             // Load config and start WMI watcher
             let config = load_config_from_disk(app.handle());
-            let startup_monitor = config.monitor_name.clone();
+            let startup_monitor = config.status_monitor().unwrap_or_default().to_string();
             // Restore the persisted enabled/paused state across restarts up
             // front, so the watcher never sees a stale `true`.
             let watch_state = Arc::new(WatchState::new(config, app_settings.enabled));
@@ -814,13 +898,10 @@ pub fn run() {
                 close_to_tray: std::sync::atomic::AtomicBool::new(app_settings.close_to_tray),
             });
 
-            // Start minimized to tray if configured
-            if app_settings.start_minimized {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.hide();
-                }
-            } else if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
+            // The window isn't created from the config (`create: false`), so
+            // starting minimized never spins up a webview at all.
+            if !app_settings.start_minimized {
+                create_main_window(app.handle())?;
             }
 
             watcher::start(watch_state, app.handle().clone());
@@ -830,14 +911,15 @@ pub fn run() {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(600));
                 let startup_hz = display::get_current_refresh_rate(&startup_monitor);
-                let _ = app_handle.emit(
-                    "hz-changed",
+                watcher::emit_hz_changed(
+                    &app_handle,
                     serde_json::json!({
                         "current_hz": startup_hz,
                         "hz_from": startup_hz,
                         "hz_to": startup_hz,
                         "reason": "Intelligent Hz Changer gestartet",
-                        "event_type": "system"
+                        "event_type": "system",
+                        "monitor": startup_monitor,
                     }),
                 );
             });
@@ -845,11 +927,8 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Zweite Instanz gestartet → bestehendes Fenster in den Vordergrund
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
+            // Zweite Instanz gestartet → Fenster (ggf. neu erzeugen) in den Vordergrund
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -880,9 +959,22 @@ pub fn run() {
             open_log_file,
             show_update_notification,
             check_exe_exists,
+            get_hz_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Closing the last window asks to exit (`code: None`). With
+            // close-to-tray on, the window is simply gone — freeing its webview —
+            // while the watcher and tray keep running. Tray "Beenden" exits with
+            // an explicit code and is never held back.
+            if let RunEvent::ExitRequested { code: None, api, .. } = event {
+                let state = app.state::<AppState>();
+                if state.close_to_tray.load(std::sync::atomic::Ordering::Relaxed) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

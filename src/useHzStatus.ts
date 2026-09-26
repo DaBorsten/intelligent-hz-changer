@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useSyncExternalStore } from "react";
 import type { HzChangedPayload, HzErrorPayload } from "./types";
+import { visibleInterval } from "./visibleInterval";
 
 /** Latest Hz + running watched keys, shared by the header and the status view. */
 export interface HzStatus {
@@ -26,7 +27,7 @@ let state: HzStatus = {
 const listeners = new Set<Listener>();
 const eventListeners = new Set<EventListener>();
 let monitorName = "";
-let timer: ReturnType<typeof setInterval> | null = null;
+let stopPolling: (() => void) | null = null;
 const unlisteners: (() => void)[] = [];
 // listen() resolves asynchronously, so a stop/start round-trip can leave a
 // registration in flight. The generation is bumped on every stop: a handle that
@@ -61,16 +62,19 @@ function keep(gen: number, fn: () => void) {
 function start() {
   const gen = generation;
   // Poll so manual Hz changes made in Windows — which fire no event — still show.
-  timer = setInterval(refresh, 5000);
+  stopPolling = visibleInterval(refresh, 5000);
   void listen<HzChangedPayload>("hz-changed", (e) => {
     // A listener from a superseded generation may still fire between resolving
     // and being torn down below; its updates are not wanted.
     if (gen !== generation) return;
-    // A switch that worked answers whatever the last failed one reported.
-    emit({
-      currentHz: e.payload.current_hz,
-      lastError: null,
-    });
+    // A switch that worked answers whatever the last failed one reported. Only
+    // the reported monitor's switches say anything about `currentHz`.
+    const ours = !e.payload.monitor || e.payload.monitor === monitorName;
+    emit(
+      ours
+        ? { currentHz: e.payload.current_hz, lastError: null }
+        : { lastError: null },
+    );
     for (const l of eventListeners) l(e.payload);
     // The event says what we set; the running set says which mode we're in.
     invoke<string[]>("get_running_watched")
@@ -89,8 +93,8 @@ function start() {
 function stop() {
   // Invalidate any registration still in flight from this generation.
   generation++;
-  if (timer) clearInterval(timer);
-  timer = null;
+  stopPolling?.();
+  stopPolling = null;
   for (const fn of unlisteners.splice(0)) fn();
 }
 

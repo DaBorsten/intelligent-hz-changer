@@ -48,3 +48,13 @@ wmi = "0.13"
 gtk = "0.18"
 zbus = { version = "5.19.0", default-features = false, features = ["blocking"] }
 
+# MSVC link.exe prints "Creating library ... .dll.lib and object ... .dll.exp"
+# for the cdylib; that's informational, not a problem.
+[lints.rust]
+linker_messages = "allow"
+
+# Smaller binary → fewer pages mapped into the long-running process.
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

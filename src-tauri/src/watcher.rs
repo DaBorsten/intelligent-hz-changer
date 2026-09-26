@@ -1,9 +1,52 @@
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
 use crate::process_watcher::WatchState;
+
+/// How many `hz-changed` events the backend remembers for the status view.
+const HZ_LOG_CAP: usize = 50;
+
+/// Recent `hz-changed` payloads, oldest first. Kept here rather than in the
+/// webview because the window is destroyed while the app sits in the tray, so
+/// a freshly created window can still show what happened in the meantime.
+static HZ_LOG: Mutex<VecDeque<serde_json::Value>> = Mutex::new(VecDeque::new());
+
+/// Source of `hz-changed` ids. Timestamps can't identify an event: two can land
+/// in the same millisecond (a stop edge next to the startup ping, say).
+static NEXT_HZ_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Stamps `payload` with an id and the current time, records it, and emits
+/// `hz-changed`.
+pub fn emit_hz_changed(app: &tauri::AppHandle, mut payload: serde_json::Value) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    payload["time"] = serde_json::json!(now_ms);
+    {
+        let mut log = HZ_LOG.lock().unwrap_or_else(|e| e.into_inner());
+        // Taken under the lock so ids follow the log's order.
+        payload["id"] = serde_json::json!(NEXT_HZ_ID.fetch_add(1, Ordering::Relaxed));
+        if log.len() == HZ_LOG_CAP {
+            log.pop_front();
+        }
+        log.push_back(payload.clone());
+    }
+    let _ = app.emit("hz-changed", payload);
+}
+
+/// Snapshot of the recorded `hz-changed` events, oldest first.
+pub fn hz_log() -> Vec<serde_json::Value> {
+    HZ_LOG
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
 
 pub fn start(state: Arc<WatchState>, app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -91,8 +134,11 @@ fn run_event_loop(
     // Activating the subscription before the initial scan means any process that
     // starts during the scan is queued and handled right after (dedup prevents
     // double handling).
+    // WITHIN interval: WmiPrvSE re-enumerates all processes this often for as
+    // long as the app runs. 2s halves that background cost versus 1s, and a
+    // game takes far longer than that to show its first frame anyway.
     let iterator =
-        wmi_con.filtered_notification::<NewProcessEvent>(&filters, Some(Duration::from_secs(1)))?;
+        wmi_con.filtered_notification::<NewProcessEvent>(&filters, Some(Duration::from_secs(2)))?;
 
     // Events only fire for processes started *after* subscribing — catch those
     // already running now.
@@ -101,6 +147,11 @@ fn run_event_loop(
     for event in iterator {
         match event {
             Ok(ev) => {
+                // Almost every process start is irrelevant; drop it before the
+                // OpenProcess round-trip an exe-path lookup would cost.
+                if !is_watched_name(state, &ev.target_instance.name) {
+                    continue;
+                }
                 let pid = ev.target_instance.process_id;
                 let exe = ev.target_instance.executable_path
                     .filter(|p| !p.is_empty())
@@ -112,6 +163,20 @@ fn run_event_loop(
         }
     }
     Ok(())
+}
+
+/// True if some watch entry carries this process name. A name match is
+/// necessary for any entry to match, so failing it rules the process out
+/// without resolving its executable path.
+#[cfg(windows)]
+fn is_watched_name(state: &WatchState, name: &str) -> bool {
+    use crate::process_watcher::WatchedProcess;
+    let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
+    cfg.watched_processes.iter().any(|w| match w {
+        WatchedProcess::Name(n) | WatchedProcess::WithPath { name: n, .. } => {
+            n.eq_ignore_ascii_case(name)
+        }
+    })
 }
 
 /// Timer fallback used only when the event subscription is unavailable.
@@ -153,6 +218,9 @@ fn run_poll_loop(wmi_con: &wmi::WMIConnection, state: &Arc<WatchState>, app: &ta
             cfg.watched_processes.clone()
         };
         for proc in &processes {
+            if !is_watched_name(state, &proc.name) {
+                continue;
+            }
             let exe = proc.executable_path.clone()
                 .filter(|p| !p.is_empty())
                 .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
@@ -188,6 +256,9 @@ pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
         cfg.watched_processes.clone()
     };
     for proc in &processes {
+        if !is_watched_name(state, &proc.name) {
+            continue;
+        }
         let exe = proc.executable_path.clone()
             .filter(|p| !p.is_empty())
             .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
@@ -355,7 +426,8 @@ fn register_process(state: &Arc<WatchState>, app: &tauri::AppHandle, name: &str,
 /// event. Serializing every transition through one lock guarantees concurrent
 /// up/down transitions can't land out of order; a no-op (already at target) is
 /// skipped so no spurious mode-set or event is produced.
-pub fn set_monitor_hz(
+#[allow(clippy::too_many_arguments)]
+fn set_monitor_hz(
     state: &WatchState,
     app: &tauri::AppHandle,
     monitor: &str,
@@ -363,12 +435,19 @@ pub fn set_monitor_hz(
     reason: String,
     process_name: Option<String>,
     event_type: &str,
+    batch: u64,
 ) {
     let _guard = state.hz_lock.lock().unwrap_or_else(|e| e.into_inner());
     let prev = crate::display::get_current_refresh_rate(monitor);
     crate::logging::log(&format!(
         "set_monitor_hz: monitor='{monitor}' prev={prev}Hz target={target}Hz reason='{reason}' event={event_type}"
     ));
+    // A configured monitor that is unplugged reports no mode at all; switching
+    // it would only raise an error for a display the user can't see.
+    if prev == 0 {
+        crate::logging::log("  -> skip: monitor not connected");
+        return;
+    }
     if prev == target {
         crate::logging::log("  -> skip: monitor already at target (no-op)");
         return;
@@ -400,15 +479,18 @@ pub fn set_monitor_hz(
         "hz_to": target,
         "reason": reason,
         "event_type": event_type,
+        "monitor": monitor,
+        "batch": batch,
     });
     if let Some(name) = process_name {
         payload["process_name"] = serde_json::json!(name);
     }
-    let _ = app.emit("hz-changed", payload);
+    emit_hz_changed(app, payload);
 }
 
-/// Computes the correct target Hz from the *current* running set and config,
-/// then applies it. Whoever runs last during a race wins with the right value.
+/// Computes the target Hz of every managed monitor from the *current* running
+/// set and config, then applies them. Whoever runs last during a race wins
+/// with the right values.
 pub fn sync_hz(
     state: &WatchState,
     app: &tauri::AppHandle,
@@ -416,21 +498,44 @@ pub fn sync_hz(
     process_name: Option<String>,
     event_type: &str,
 ) {
-    let any_running = state.is_any_running();
-    let (monitor, target) = {
-        let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-        let monitor = cfg.monitor_name.clone();
-        let target = if any_running {
-            cfg.game_hz_for(&monitor)
-        } else {
-            cfg.default_hz_for(&monitor)
-        };
-        (monitor, target)
-    };
+    let running = state.get_running();
+    let targets = state
+        .config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .hz_targets(&running);
     crate::logging::log(&format!(
-        "sync_hz: any_running={any_running} -> target={target}Hz (event={event_type}, reason='{reason}')"
+        "sync_hz: running={running:?} -> targets={targets:?} (event={event_type}, reason='{reason}')"
     ));
-    set_monitor_hz(state, app, &monitor, target, reason, process_name, event_type);
+    apply_targets(state, app, &targets, reason, process_name, event_type);
+}
+
+/// Source of `batch` ids: every monitor switched by one sync shares one, so the
+/// UI can count a game start as one switch however many monitors it touched.
+static NEXT_BATCH: AtomicU64 = AtomicU64::new(1);
+
+/// Applies each `(monitor, hz)` pair as one batch.
+pub fn apply_targets(
+    state: &WatchState,
+    app: &tauri::AppHandle,
+    targets: &[(String, u32)],
+    reason: String,
+    process_name: Option<String>,
+    event_type: &str,
+) {
+    let batch = NEXT_BATCH.fetch_add(1, Ordering::Relaxed);
+    for (monitor, hz) in targets {
+        set_monitor_hz(
+            state,
+            app,
+            monitor,
+            *hz,
+            reason.clone(),
+            process_name.clone(),
+            event_type,
+            batch,
+        );
+    }
 }
 
 /// Shared tail once a watched process's exit has been detected: release the

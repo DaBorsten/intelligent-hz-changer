@@ -1,139 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  buildDisplayNums,
+  fallbackDefaultHz,
+  fallbackGameHz,
+  getMonitorLabel,
+} from "../monitors";
 import type {
   BackendStatus,
-  MonitorHz,
   MonitorInfoExtended,
+  MonitorProfile,
   WatchConfig,
 } from "../types";
 import { useTheme } from "../useTheme";
-
-interface SelectOption {
-  value: string;
-  label: string;
-}
-
-function CustomSelect({
-  value,
-  options,
-  onChange,
-}: {
-  value: string;
-  options: SelectOption[];
-  onChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = options.find((o) => o.value === value);
-
-  useEffect(() => {
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node))
-        setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative shrink-0 select-none">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={`
-          flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all
-          bg-white dark:bg-[#1e1e1e]
-          border border-black/10 dark:border-white/8
-          text-slate-800 dark:text-slate-100
-          hover:bg-slate-50 dark:hover:bg-[#252525]
-          hover:border-black/15 dark:hover:border-white/13
-          shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_4px_rgba(0,0,0,0.4)]
-          ${open ? "border-red-400/60 dark:border-red-500/40 ring-2 ring-red-500/10 dark:ring-red-500/10" : ""}
-        `}
-      >
-        <span className="relative">
-          <span className="invisible whitespace-nowrap" aria-hidden="true">
-            {
-              options.reduce(
-                (a, b) => (b.label.length > a.label.length ? b : a),
-                options[0],
-              ).label
-            }
-          </span>
-          <span className="absolute inset-0 flex items-center whitespace-nowrap">
-            {selected?.label ?? value}
-          </span>
-        </span>
-        <svg
-          className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 shrink-0 ${open ? "rotate-180" : ""}`}
-          viewBox="0 0 12 12"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            d="M2 4l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-
-      {open && (
-        <div
-          className="
-          absolute right-0 mt-1.5 z-50 min-w-full
-          bg-white dark:bg-[#1e1e1e]
-          border border-black/10 dark:border-white/8
-          rounded-xl overflow-hidden
-          shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.6)]
-        "
-        >
-          {options.map((opt) => {
-            const isActive = opt.value === value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => {
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-                className={`
-                  w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium text-left transition-colors
-                  ${
-                    isActive
-                      ? "bg-red-500/8 dark:bg-red-500/10 text-red-600 dark:text-red-400"
-                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
-                  }
-                `}
-              >
-                <span className="whitespace-nowrap">{opt.label}</span>
-                {isActive && (
-                  <svg
-                    className="w-3.5 h-3.5 shrink-0"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                  >
-                    <path
-                      d="M2 6l3 3 5-5"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+import { CustomSelect } from "./CustomSelect";
+import { Switch } from "./Switch";
 
 interface Props {
   config: WatchConfig;
@@ -142,36 +24,40 @@ interface Props {
   saving: boolean;
 }
 
-// Windows liefert `\\.\DISPLAYn` — diese Nummer sehen Nutzer auch in den
-// Windows-Anzeigeeinstellungen, also übernehmen wir sie. Linux-Connectornamen
-// (`eDP-1`, `DP-2`, `HDMI-A-1`) tragen keine solche Nummer; dort nummerieren
-// wir über die Reihenfolge durch, in der das Backend die Monitore liefert.
-function buildDisplayNums(
-  monitors: MonitorInfoExtended[],
-): Map<string, number> {
-  return new Map(
-    monitors.map((m, i) => {
-      const win = m.device_name.match(/DISPLAY(\d+)/i);
-      return [m.device_name, win ? parseInt(win[1]) : i + 1];
-    }),
-  );
-}
+type Profiles = Record<string, MonitorProfile>;
 
-function getMonitorLabel(
-  mon: MonitorInfoExtended,
-  all: MonitorInfoExtended[],
-  t: (k: string) => string,
-): string {
-  if (mon.is_primary) return t("monitor.labelPrimary");
-  if (mon.is_duplicate) return t("monitor.labelClone");
-  const secondary = all.filter((m) => !m.is_primary && !m.is_duplicate);
-  if (secondary.length === 1) return t("monitor.labelSide");
-  const primary = all.find((m) => m.is_primary);
-  if (!primary) return t("monitor.labelSide");
-  const dx = mon.x - primary.x;
-  if (dx > 100) return t("monitor.labelRight");
-  if (dx < -100) return t("monitor.labelLeft");
-  return mon.y < primary.y ? t("monitor.labelAbove") : t("monitor.labelBelow");
+const FALLBACK_HZ = [60, 75, 90, 120, 144, 165, 200, 240];
+
+/**
+ * The saved profiles plus a disabled one for every connected monitor that has
+ * none yet, so each card has values to show. On a fresh install nothing is
+ * saved, and the draft switches the primary monitor on — the old
+ * single-monitor default — which leaves Save enabled to confirm it.
+ */
+function buildProfiles(
+  saved: Profiles,
+  monitors: MonitorInfoExtended[],
+  supported: Record<string, number[]>,
+): { baseline: Profiles; draft: Profiles } {
+  const baseline: Profiles = { ...saved };
+  for (const m of monitors) {
+    if (baseline[m.device_name]) continue;
+    const hz = supported[m.device_name] ?? [];
+    baseline[m.device_name] = {
+      enabled: false,
+      game_hz: fallbackGameHz(hz, m),
+      default_hz: fallbackDefaultHz(hz, m),
+    };
+  }
+  const draft = { ...baseline };
+  if (Object.keys(saved).length === 0 && monitors.length > 0) {
+    const primary = monitors.find((m) => m.is_primary) ?? monitors[0];
+    draft[primary.device_name] = {
+      ...draft[primary.device_name],
+      enabled: true,
+    };
+  }
+  return { baseline, draft };
 }
 
 const CANVAS_H = 320;
@@ -181,43 +67,33 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const { t } = useTranslation();
   const { isDark } = useTheme();
   const [monitors, setMonitors] = useState<MonitorInfoExtended[]>([]);
-  const [supportedHz, setSupportedHz] = useState<number[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [supportedHz, setSupportedHz] = useState<Record<string, number[]>>({});
+  const [loaded, setLoaded] = useState(false);
+  // Device name of the monitor whose test is running.
+  const [testing, setTesting] = useState<string | null>(null);
   // How long a test lasts is a backend question: on GNOME the trial runs inside
   // Mutter's own "keep these settings?" prompt, which counts down for 20 s.
   const [testSeconds, setTestSeconds] = useState(5);
   const [backend, setBackend] = useState<BackendStatus | null>(null);
-  const [testError, setTestError] = useState("");
+  const [testError, setTestError] = useState<{
+    hz: number;
+    error: string;
+  } | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(640);
-  const [draftGameHz, setDraftGameHz] = useState(config.game_hz);
-  const [draftDefaultHz, setDraftDefaultHz] = useState(config.default_hz);
-  const [savedGameHz, setSavedGameHz] = useState(config.game_hz);
-  const [savedDefaultHz, setSavedDefaultHz] = useState(config.default_hz);
-  const isDirty =
-    draftGameHz !== savedGameHz || draftDefaultHz !== savedDefaultHz;
-  const draftGameHzRef = useRef(draftGameHz);
-  const draftDefaultHzRef = useRef(draftDefaultHz);
+  const [draft, setDraft] = useState<Profiles>({});
+  const [baseline, setBaseline] = useState<Profiles>({});
+  // Both come out of `buildProfiles` or a save, with keys in the same order,
+  // so comparing their JSON is a structural comparison.
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const isDirtyRef = useRef(isDirty);
-
   useEffect(() => {
-    draftGameHzRef.current = draftGameHz;
-    draftDefaultHzRef.current = draftDefaultHz;
     isDirtyRef.current = isDirty;
-  }, [draftDefaultHz, draftGameHz, isDirty]);
+  }, [isDirty]);
 
   // Enumerating monitors builds a COM/WMI connection and walks every display
-  // mode, so it runs once on mount rather than on every config/onChange change.
-  // Only the mount-time value matters for the initial selection; re-running on
-  // it would re-enumerate right after we set the name.
-  const hadMonitorNameAtMount = useRef(!!config.monitor_name);
-  const onChangeRef = useRef(onChange);
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-
+  // mode, so it runs once on mount rather than on every config change.
   useEffect(() => {
     invoke<number>("get_test_seconds")
       .then(setTestSeconds)
@@ -226,65 +102,34 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
       .then(setBackend)
       .catch(console.error);
     invoke<MonitorInfoExtended[]>("get_monitors_extended")
-      .then((mons) => {
+      .then(async (mons) => {
+        const rates = await Promise.all(
+          mons.map((m) =>
+            invoke<number[]>("get_supported_hz", {
+              monitorName: m.device_name,
+            }).catch(() => [] as number[]),
+          ),
+        );
+        setSupportedHz(
+          Object.fromEntries(mons.map((m, i) => [m.device_name, rates[i]])),
+        );
         setMonitors(mons);
-        if (!hadMonitorNameAtMount.current && mons.length > 0) {
-          const initial = mons.find((m) => m.is_primary) ?? mons[0];
-          onChangeRef.current({ monitor_name: initial.device_name });
-        }
+        setLoaded(true);
       })
       .catch(console.error);
   }, []);
 
-  const prevMonitorRef = useRef<string>("");
-
+  // (Re)build the draft once the hardware is known, and whenever the saved
+  // profiles change underneath an untouched draft (config loading late, or a
+  // game's override creating a profile).
   useEffect(() => {
-    if (!config.monitor_name) return;
-    let cancelled = false;
-    const monitorChanged = prevMonitorRef.current !== config.monitor_name;
-    prevMonitorRef.current = config.monitor_name;
+    if (!loaded || isDirtyRef.current) return;
+    const next = buildProfiles(config.monitors, monitors, supportedHz);
     queueMicrotask(() => {
-      if (!cancelled) setLoading(true);
+      setBaseline(next.baseline);
+      setDraft(next.draft);
     });
-    void invoke<number[]>("get_supported_hz", {
-      monitorName: config.monitor_name,
-    })
-      .then((hz) => {
-        if (cancelled) return;
-        setSupportedHz(hz);
-        if (hz.length === 0) return;
-        if (monitorChanged || !isDirtyRef.current) {
-          const saved = config.monitor_settings[config.monitor_name] as
-            | MonitorHz
-            | undefined;
-          const newGameHz =
-            saved?.game_hz && hz.includes(saved.game_hz)
-              ? saved.game_hz
-              : hz[hz.length - 1];
-          const newDefaultHz =
-            saved?.default_hz && hz.includes(saved.default_hz)
-              ? saved.default_hz
-              : hz.includes(60)
-                ? 60
-                : hz[0];
-          setDraftGameHz(newGameHz);
-          setDraftDefaultHz(newDefaultHz);
-          setSavedGameHz(newGameHz);
-          setSavedDefaultHz(newDefaultHz);
-        } else {
-          if (!hz.includes(draftGameHzRef.current))
-            setDraftGameHz(hz[hz.length - 1]);
-          if (!hz.includes(draftDefaultHzRef.current))
-            setDraftDefaultHz(hz.includes(60) ? 60 : hz[0]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [config.monitor_name, config.monitor_settings]);
+  }, [loaded, config.monitors, monitors, supportedHz]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -303,56 +148,55 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
     CANVAS_H,
     CANVAS_PAD,
   );
-  const configuredMonitor = monitors.find(
-    (m) => m.device_name === config.monitor_name,
+  const sortedMonitors = [...monitors].sort(
+    (a, b) =>
+      (displayNums.get(a.device_name) ?? 0) -
+      (displayNums.get(b.device_name) ?? 0),
+  );
+  const connected = new Set(monitors.map((m) => m.device_name));
+  const disconnected = Object.keys(draft).filter(
+    (name) => !connected.has(name) && draft[name].enabled,
   );
 
-  const hzWarning =
-    supportedHz.length > 0 && draftGameHz < draftDefaultHz
-      ? t("monitor.hzWarning")
-      : null;
+  function patchProfile(names: string[], patch: Partial<MonitorProfile>) {
+    setDraft((prev) => {
+      const next = { ...prev };
+      for (const n of names) if (next[n]) next[n] = { ...next[n], ...patch };
+      return next;
+    });
+  }
 
-  async function handleTestHz() {
-    if (!config.monitor_name) return;
-    setTesting(true);
-    setTestError("");
+  async function handleTestHz(monitorName: string, hz: number) {
+    setTesting(monitorName);
+    setTestError(null);
     try {
-      await invoke("test_hz", {
-        monitorName: config.monitor_name,
-        hz: draftGameHz,
-      });
-      setTimeout(() => setTesting(false), testSeconds * 1000 + 500);
+      await invoke("test_hz", { monitorName, hz });
+      setTimeout(() => setTesting(null), testSeconds * 1000 + 500);
     } catch (e) {
       // The rate the backend refused here is the one a save would apply too, so
       // the reason has to be visible rather than just ending the test silently.
-      setTestError(String(e));
-      setTesting(false);
+      setTestError({ hz, error: String(e) });
+      setTesting(null);
     }
   }
 
   function handleSave() {
-    const settings = { ...config.monitor_settings };
-    settings[config.monitor_name] = {
-      game_hz: draftGameHz,
-      default_hz: draftDefaultHz,
-    };
-    const override = {
-      game_hz: draftGameHz,
-      default_hz: draftDefaultHz,
-      monitor_settings: settings,
-    };
+    const override = { monitors: draft };
     onChange(override);
     onSave(override);
-    setSavedGameHz(draftGameHz);
-    setSavedDefaultHz(draftDefaultHz);
+    setBaseline(draft);
     setSaveMsg(t("monitor.saved"));
     setTimeout(() => setSaveMsg(""), 2500);
   }
 
-  const hzButtons =
-    supportedHz.length > 0
-      ? supportedHz
-      : [60, 75, 90, 120, 144, 165, 200, 240];
+  function hzOptions(deviceName: string, current: number) {
+    const supported = supportedHz[deviceName];
+    const list = supported && supported.length > 0 ? supported : FALLBACK_HZ;
+    const all = list.includes(current) ? list : [...list, current];
+    return [...all]
+      .sort((a, b) => b - a)
+      .map((hz) => ({ value: String(hz), label: `${hz} Hz` }));
+  }
 
   // An unusable backend produces an empty monitor list, which on its own looks
   // like "no displays attached" — so say what actually went wrong. The generic
@@ -405,31 +249,44 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
               isCloneGroup,
               groupDeviceNames,
             }) => {
-              const isConfigured = groupDeviceNames.includes(
-                config.monitor_name,
-              );
+              const isOn = groupDeviceNames.some((n) => draft[n]?.enabled);
               const label = isCloneGroup
                 ? t("monitor.labelClone")
                 : getMonitorLabel(mon, monitors, t);
 
+              const on = {
+                bg: isDark ? "#a83838" : "#d64545",
+                border: isDark ? "#bd4545" : "#c23a3a",
+                shadow: isDark
+                  ? "0 4px 16px rgba(0,0,0,0.45)"
+                  : "0 4px 16px rgba(214,69,69,0.2)",
+                label: "rgba(255,255,255,0.75)",
+                num: "white",
+                sub: "rgba(255,255,255,0.7)",
+                badgeBg: "rgba(255,255,255,0.2)",
+                badgeText: "white",
+              };
+
               return (
                 <div
                   key={mon.device_name}
-                  onClick={() => onChange({ monitor_name: mon.device_name })}
+                  onClick={() =>
+                    patchProfile(groupDeviceNames, { enabled: !isOn })
+                  }
                   className="absolute rounded-xl cursor-pointer transition-[background-color,border-color,box-shadow] select-none flex flex-col monitor-card"
                   style={{
                     left,
                     top,
                     width: w,
                     height: h,
-                    backgroundColor: isConfigured
-                      ? "#ef4444"
+                    backgroundColor: isOn
+                      ? on.bg
                       : isDark
                         ? "#2a2a2a"
                         : "white",
-                    border: `2px solid ${isConfigured ? "#dc2626" : isDark ? "#3f3f3f" : "#e2e8f0"}`,
-                    boxShadow: isConfigured
-                      ? "0 4px 24px rgba(239,68,68,0.35)"
+                    border: `2px solid ${isOn ? on.border : isDark ? "#3f3f3f" : "#e2e8f0"}`,
+                    boxShadow: isOn
+                      ? on.shadow
                       : isDark
                         ? "0 2px 8px rgba(0,0,0,0.4)"
                         : "0 2px 8px rgba(0,0,0,0.07)",
@@ -440,8 +297,8 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                       className="font-bold tracking-widest"
                       style={{
                         fontSize: Math.max(9, Math.min(12, h * 0.06)),
-                        color: isConfigured
-                          ? "rgba(255,255,255,0.8)"
+                        color: isOn
+                          ? on.label
                           : isDark
                             ? "#64748b"
                             : "#94a3b8",
@@ -449,13 +306,13 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                     >
                       {label}
                     </span>
-                    {isConfigured && (
+                    {isOn && (
                       <span
                         className="font-bold rounded-full px-1.5 py-0.5"
                         style={{
                           fontSize: 7,
-                          backgroundColor: "rgba(255,255,255,0.25)",
-                          color: "white",
+                          backgroundColor: on.badgeBg,
+                          color: on.badgeText,
                         }}
                       >
                         {t("monitor.activeBadge")}
@@ -468,11 +325,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                       className="font-black leading-none"
                       style={{
                         fontSize: Math.min(h * 0.42, isCloneGroup ? 52 : 72),
-                        color: isConfigured
-                          ? "white"
-                          : isDark
-                            ? "#cbd5e1"
-                            : "#1e293b",
+                        color: isOn ? on.num : isDark ? "#cbd5e1" : "#1e293b",
                         letterSpacing: isCloneGroup ? "-0.02em" : undefined,
                       }}
                     >
@@ -484,8 +337,8 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                     <span
                       style={{
                         fontSize: Math.max(9, Math.min(12, h * 0.055)),
-                        color: isConfigured
-                          ? "rgba(255,255,255,0.7)"
+                        color: isOn
+                          ? on.sub
                           : isDark
                             ? "#64748b"
                             : "#94a3b8",
@@ -518,123 +371,135 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         </div>
       </div>
 
-      {/* Monitor detail card */}
-      {configuredMonitor && (
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div
-                className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center text-white font-bold shrink-0 shadow-sm shadow-red-500/30"
-                style={{
-                  fontSize: layout.find((l) =>
-                    l.groupDeviceNames.includes(config.monitor_name),
-                  )?.isCloneGroup
-                    ? 10
-                    : 14,
-                }}
-              >
-                {layout.find((l) =>
-                  l.groupDeviceNames.includes(config.monitor_name),
-                )?.displayNum ?? displayNums.get(configuredMonitor.device_name)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
-                  {configuredMonitor.friendly_name}
+      {/* Per-monitor global settings */}
+      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4 space-y-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {t("monitor.globalTitle")}
+          </h2>
+          <span className="text-xs text-slate-400 dark:text-slate-500">
+            {t("monitor.globalHint")}
+          </span>
+        </div>
+
+        {sortedMonitors.map((mon) => {
+          const profile = draft[mon.device_name];
+          if (!profile) return null;
+          const num = displayNums.get(mon.device_name);
+          const isTesting = testing === mon.device_name;
+          return (
+            <div
+              key={mon.device_name}
+              className="rounded-xl border border-black/6 dark:border-white/6 bg-white dark:bg-[#2a2a2a] p-3 space-y-3"
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0 text-sm ${
+                    profile.enabled
+                      ? "bg-red-500 text-white shadow-sm shadow-red-500/30"
+                      : "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300"
+                  }`}
+                >
+                  {num}
                 </div>
-                <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate select-text">
-                  {configuredMonitor.width} × {configuredMonitor.height} ·{" "}
-                  {t("monitor.upTo", { hz: configuredMonitor.max_hz })}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
+                    {mon.friendly_name}
+                  </div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate select-text">
+                    {mon.width} × {mon.height} ·{" "}
+                    {t("monitor.upTo", { hz: mon.max_hz })}
+                  </div>
                 </div>
+                <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
+                  {t(
+                    profile.enabled ? "monitor.switchOn" : "monitor.switchOff",
+                  )}
+                </span>
+                <Switch
+                  checked={profile.enabled}
+                  onChange={(v) =>
+                    patchProfile([mon.device_name], { enabled: v })
+                  }
+                  title={t("monitor.switchTitle")}
+                />
               </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <span
+                    className={`flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 ${profile.enabled ? "" : "opacity-60"}`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    {t("monitor.gameHz")}
+                  </span>
+                  <CustomSelect
+                    value={String(profile.game_hz)}
+                    options={hzOptions(mon.device_name, profile.game_hz)}
+                    onChange={(v) =>
+                      patchProfile([mon.device_name], { game_hz: Number(v) })
+                    }
+                    dimmed={!profile.enabled}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span
+                    className={`flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 ${profile.enabled ? "" : "opacity-60"}`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500" />
+                    {t("monitor.defaultHz")}
+                  </span>
+                  <CustomSelect
+                    value={String(profile.default_hz)}
+                    options={hzOptions(mon.device_name, profile.default_hz)}
+                    onChange={(v) =>
+                      patchProfile([mon.device_name], {
+                        default_hz: Number(v),
+                      })
+                    }
+                    dimmed={!profile.enabled}
+                  />
+                </div>
+                <button
+                  onClick={() =>
+                    void handleTestHz(mon.device_name, profile.game_hz)
+                  }
+                  disabled={testing !== null}
+                  className={`${profile.enabled ? "" : "opacity-60"} px-3 py-2 bg-[#f0eeeb] dark:bg-[#1e1e1e] border border-black/8 dark:border-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium
+                             rounded-xl hover:bg-slate-200 dark:hover:bg-[#333] disabled:opacity-40 transition-colors`}
+                >
+                  {isTesting
+                    ? t("monitor.testing")
+                    : t("monitor.testBtn", { seconds: testSeconds })}
+                </button>
+              </div>
+
+              {profile.game_hz < profile.default_hz && (
+                <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  {t("monitor.hzWarning")}
+                </div>
+              )}
             </div>
-            {monitors.length > 1 && (
-              <CustomSelect
-                value={config.monitor_name}
-                options={monitors.map((m) => ({
-                  value: m.device_name,
-                  label: `${getMonitorLabel(m, monitors, t)} — ${m.friendly_name}`,
-                }))}
-                onChange={(v) => onChange({ monitor_name: v })}
-              />
-            )}
-          </div>
-        </div>
-      )}
+          );
+        })}
 
-      {/* Hz selectors */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4 space-y-5">
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-              {t("monitor.gameHz")}
-            </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              {t("monitor.gameHzHint")}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {hzButtons.map((hz) => (
-              <button
-                key={hz}
-                onClick={() => setDraftGameHz(hz)}
-                disabled={loading}
-                className={`px-3.5 py-1.5 rounded-xl text-sm font-semibold transition-all ${
-                  draftGameHz === hz
-                    ? "bg-red-500 text-white shadow-sm shadow-red-500/30 border border-transparent"
-                    : "bg-white dark:bg-[#2a2a2a] text-slate-600 dark:text-slate-300 border border-black/8 dark:border-white/8 hover:border-black/20 dark:hover:border-white/20"
-                }`}
-              >
-                {hz} Hz
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="border-t border-black/6 dark:border-white/6" />
-
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-400 dark:bg-slate-500 shrink-0" />
-            <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-              {t("monitor.defaultHz")}
-            </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              {t("monitor.defaultHzHint")}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {hzButtons.map((hz) => (
-              <button
-                key={hz}
-                onClick={() => setDraftDefaultHz(hz)}
-                disabled={loading}
-                className={`px-3.5 py-1.5 rounded-xl text-sm font-semibold transition-all ${
-                  draftDefaultHz === hz
-                    ? "bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 border border-transparent"
-                    : "bg-white dark:bg-[#2a2a2a] text-slate-600 dark:text-slate-300 border border-black/8 dark:border-white/8 hover:border-black/20 dark:hover:border-white/20"
-                }`}
-              >
-                {hz} Hz
-              </button>
-            ))}
-          </div>
-        </div>
+        {disconnected.map((name) => (
+          <p
+            key={name}
+            className="text-xs text-slate-400 dark:text-slate-500 italic"
+          >
+            {t("monitor.disconnected", { name })}
+          </p>
+        ))}
       </div>
-
-      {hzWarning && (
-        <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-2.5 text-sm text-amber-700 dark:text-amber-400">
-          {hzWarning}
-        </div>
-      )}
 
       {testError && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
           <div className="text-sm font-semibold text-red-700 dark:text-red-300">
-            {t("monitor.testFailed", { hz: draftGameHz })}
+            {t("monitor.testFailed", { hz: testError.hz })}
           </div>
           <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5 wrap-break-word select-text">
-            {testError}
+            {testError.error}
           </div>
         </div>
       )}
@@ -647,16 +512,6 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
               {saveMsg}
             </span>
           )}
-          <button
-            onClick={() => void handleTestHz()}
-            disabled={testing || !config.monitor_name || !isDirty}
-            className="px-4 py-2 bg-[#f0eeeb] dark:bg-[#2a2a2a] border border-black/8 dark:border-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium
-                       rounded-xl hover:bg-slate-200 dark:hover:bg-[#333] disabled:opacity-40 transition-colors"
-          >
-            {testing
-              ? t("monitor.testing")
-              : t("monitor.testBtn", { seconds: testSeconds })}
-          </button>
           <button
             onClick={handleSave}
             disabled={saving || !isDirty}

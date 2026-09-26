@@ -29,17 +29,33 @@ export interface MonitorInfoExtended {
   max_hz: number;
 }
 
-export interface MonitorHz {
+/** Global settings for one monitor. */
+export interface MonitorProfile {
+  /** Whether watched games switch this monitor unless they say otherwise. */
+  enabled: boolean;
   game_hz: number;
   default_hz: number;
 }
 
+/** A game's deviation from a monitor's global setting; absent = global. */
+export type HzOverride = "keep" | { hz: number };
+
 export interface WatchConfig {
   watched_processes: WatchedProcess[];
-  monitor_name: string;
-  game_hz: number;
-  default_hz: number;
-  monitor_settings: Record<string, MonitorHz>;
+  /** Device name → profile. */
+  monitors: Record<string, MonitorProfile>;
+  /** `wpKey`s of entries that stay listed but never trigger a switch. */
+  disabled_processes: string[];
+  /** `wpKey` → device name → override. */
+  process_overrides: Record<string, Record<string, HzOverride>>;
+}
+
+/** The monitor the header and status view report on. Mirrors
+ * `WatchConfig::status_monitor`: first switching monitor in sorted order,
+ * else the first configured one. */
+export function statusMonitor(config: WatchConfig): string {
+  const names = Object.keys(config.monitors).sort();
+  return names.find((n) => config.monitors[n].enabled) ?? names[0] ?? "";
 }
 
 export interface HzChangedPayload {
@@ -49,6 +65,14 @@ export interface HzChangedPayload {
   reason: string;
   process_name?: string;
   event_type?: "process_start" | "process_stop" | "system";
+  /** Device name of the monitor this switch applied to. */
+  monitor?: string;
+  /** Shared by every monitor switched for the same reason. */
+  batch?: number;
+  /** Backend sequence number, unique and increasing per app run. */
+  id: number;
+  /** Backend timestamp (ms since epoch). */
+  time: number;
 }
 
 /** A refresh-rate switch the backend attempted and the display driver refused. */
@@ -69,13 +93,18 @@ export interface BackendStatus {
 }
 
 export interface LogEntry {
+  /** Backend id of the event (see `HzChangedPayload.id`). */
   id: number;
+  /** Backend timestamp of the event (ms since epoch). */
+  time: number;
   timestamp: string;
   message: string;
   hz_from?: number;
   hz_to?: number;
   process_name?: string;
   event_type: "process_start" | "process_stop" | "system";
+  monitor?: string;
+  batch?: number;
 }
 
 export interface HzPoint {

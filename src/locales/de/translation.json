@@ -35,7 +35,8 @@
     "filterProcess": "Prozesse",
     "noEvents": "Noch keine Ereignisse.",
     "badgeGame": "GAME",
-    "badgeStandby": "STANDBY"
+    "badgeStandby": "STANDBY",
+    "monitorTag": "M{{n}}"
   },
   "processes": {
     "addTitle": "Prozess hinzufügen",
@@ -51,6 +52,9 @@
     "active": "• AKTIV",
     "editTitle": "Bearbeiten",
     "removeTitle": "Entfernen",
+    "paused": "Pausiert – löst keinen Wechsel aus",
+    "pauseTitle": "Pausieren",
+    "resumeTitle": "Aktivieren",
     "notFound": "Diese EXE-Datei wurde nicht gefunden.",
     "notFoundLinux": "Diese Programmdatei wurde nicht gefunden.",
     "pickerTitle": "Aus laufenden Prozessen wählen",
@@ -78,7 +82,15 @@
     "namePlaceholder": "prozessname.exe",
     "namePlaceholderLinux": "prozessname",
     "pathPlaceholder": "z.B. C:\\Games\\MeinSpiel\\game.exe",
-    "pathPlaceholderLinux": "z.B. /usr/games/meinspiel"
+    "pathPlaceholderLinux": "z.B. /usr/games/meinspiel",
+    "customHz": "Eigene",
+    "customHzTitle": "Eigene Monitor-Einstellungen für dieses Spiel",
+    "monitorsTitle": "Monitore & Hz",
+    "monitorsHint": "Standard sind die globalen Einstellungen aus „Monitor & Hz“.",
+    "monitorsLoading": "Monitore werden geladen…",
+    "hzGlobal": "Global ({{hz}} Hz)",
+    "hzGlobalOff": "Global (nicht umschalten)",
+    "hzKeep": "Nicht ändern"
   },
   "monitor": {
     "labelPrimary": "PRIMARY",
@@ -90,7 +102,7 @@
     "labelBelow": "UNTEN",
     "activeBadge": "AKTIV",
     "identify": "Identifizieren",
-    "clickHint": "Klicke auf einen Monitor, um seine Hz-Werte zu setzen.",
+    "clickHint": "Klicke auf einen Monitor, um das Umschalten ein- oder auszuschalten.",
     "upTo": "bis {{hz}} Hz",
     "gameHz": "Game-Hz",
     "gameHzHint": "· wenn ein überwachter Prozess läuft",
@@ -110,7 +122,13 @@
       "no_monitors": "Es wurde kein aktiver Monitor gefunden.",
       "generic": "Die Anzeigekonfiguration dieser Sitzung kann nicht gelesen werden ({{detail}})."
     },
-    "testFailed": "Test mit {{hz}} Hz fehlgeschlagen"
+    "testFailed": "Test mit {{hz}} Hz fehlgeschlagen",
+    "globalTitle": "Globale Einstellungen",
+    "globalHint": "Gelten für alle Spiele, außer ein Spiel legt eigene Werte fest.",
+    "switchTitle": "Beim Spielstart umschalten",
+    "switchOn": "Umschalten",
+    "switchOff": "Nicht umschalten",
+    "disconnected": "{{name}} ist nicht verbunden und wird übersprungen."
   },
   "settings": {
     "updateAvailable": "Update verfügbar – v{{version}}",

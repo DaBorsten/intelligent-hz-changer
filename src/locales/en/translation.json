@@ -35,7 +35,8 @@
     "filterProcess": "Processes",
     "noEvents": "No events yet.",
     "badgeGame": "GAME",
-    "badgeStandby": "STANDBY"
+    "badgeStandby": "STANDBY",
+    "monitorTag": "M{{n}}"
   },
   "processes": {
     "addTitle": "Add process",
@@ -51,6 +52,9 @@
     "active": "• ACTIVE",
     "editTitle": "Edit",
     "removeTitle": "Remove",
+    "paused": "Paused – won't trigger a switch",
+    "pauseTitle": "Pause",
+    "resumeTitle": "Enable",
     "notFound": "This EXE file was not found.",
     "notFoundLinux": "This file was not found.",
     "pickerTitle": "Pick from running processes",
@@ -78,7 +82,15 @@
     "namePlaceholder": "processname.exe",
     "namePlaceholderLinux": "processname",
     "pathPlaceholder": "e.g. C:\\Games\\MyGame\\game.exe",
-    "pathPlaceholderLinux": "e.g. /usr/games/mygame"
+    "pathPlaceholderLinux": "e.g. /usr/games/mygame",
+    "customHz": "Custom",
+    "customHzTitle": "Custom monitor settings for this game",
+    "monitorsTitle": "Monitors & Hz",
+    "monitorsHint": "Defaults to the global settings under \"Monitor & Hz\".",
+    "monitorsLoading": "Loading monitors…",
+    "hzGlobal": "Global ({{hz}} Hz)",
+    "hzGlobalOff": "Global (don't switch)",
+    "hzKeep": "Don't change"
   },
   "monitor": {
     "labelPrimary": "PRIMARY",
@@ -90,7 +102,7 @@
     "labelBelow": "BELOW",
     "activeBadge": "ACTIVE",
     "identify": "Identify",
-    "clickHint": "Click a monitor to set its Hz values.",
+    "clickHint": "Click a monitor to turn switching on or off.",
     "upTo": "up to {{hz}} Hz",
     "gameHz": "Game Hz",
     "gameHzHint": "· when a watched process is running",
@@ -110,7 +122,13 @@
       "no_monitors": "No active monitor was found.",
       "generic": "The display configuration of this session cannot be read ({{detail}})."
     },
-    "testFailed": "Testing {{hz}} Hz failed"
+    "testFailed": "Testing {{hz}} Hz failed",
+    "globalTitle": "Global settings",
+    "globalHint": "Apply to every game unless a game sets its own.",
+    "switchTitle": "Switch when a game starts",
+    "switchOn": "Switch",
+    "switchOff": "Don't switch",
+    "disconnected": "{{name}} is not connected and will be skipped."
   },
   "settings": {
     "updateAvailable": "Update available – v{{version}}",

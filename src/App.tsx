@@ -7,17 +7,16 @@ import { MonitorConfig } from "./components/MonitorConfig";
 import { ProcessList } from "./components/ProcessList";
 import { SettingsTab } from "./components/SettingsTab";
 import { StatusView } from "./components/StatusView";
-import type { WatchConfig } from "./types";
+import { statusMonitor, type WatchConfig } from "./types";
 import { clearHzError, useHzStatus } from "./useHzStatus";
 
 type Tab = "status" | "processes" | "monitor" | "settings";
 
 const DEFAULT_CONFIG: WatchConfig = {
   watched_processes: [],
-  monitor_name: "",
-  game_hz: 144,
-  default_hz: 60,
-  monitor_settings: {},
+  monitors: {},
+  disabled_processes: [],
+  process_overrides: {},
 };
 
 function PulseIcon({ active }: { active?: boolean }) {
@@ -139,7 +138,7 @@ export default function App() {
     currentHz: headerHz,
     running,
     lastError,
-  } = useHzStatus(config.monitor_name);
+  } = useHzStatus(statusMonitor(config));
   const gameMode = active && running.length > 0;
 
   useEffect(() => {
@@ -170,13 +169,7 @@ export default function App() {
           return prev;
         });
       });
-      await invoke("save_config", {
-        watchedProcesses: merged.watched_processes,
-        monitorName: merged.monitor_name,
-        gameHz: merged.game_hz,
-        defaultHz: merged.default_hz,
-        monitorSettings: merged.monitor_settings,
-      });
+      await invoke("save_config", { config: merged });
     } catch (e) {
       console.error(e);
     } finally {
@@ -310,16 +303,16 @@ export default function App() {
           <div key={`tab-${tab}`} className="tab-content">
             {tab === "status" && (
               <StatusView
-                monitorName={config.monitor_name}
+                monitorName={statusMonitor(config)}
                 watchedProcesses={config.watched_processes}
-                gameHz={config.game_hz}
+                gameHz={config.monitors[statusMonitor(config)]?.game_hz}
                 active={active}
               />
             )}
             {tab === "processes" && (
               <ProcessList
-                processes={config.watched_processes}
-                onChange={(p) => patchConfig({ watched_processes: p }, true)}
+                config={config}
+                onChange={(patch) => patchConfig(patch, true)}
                 onSave={() => void save()}
                 saving={saving}
               />
