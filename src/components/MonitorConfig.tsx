@@ -297,11 +297,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                       className="font-bold tracking-widest"
                       style={{
                         fontSize: Math.max(9, Math.min(12, h * 0.06)),
-                        color: isOn
-                          ? on.label
-                          : isDark
-                            ? "#64748b"
-                            : "#94a3b8",
+                        color: isOn ? on.label : isDark ? "#64748b" : "#94a3b8",
                       }}
                     >
                       {label}
@@ -337,11 +333,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                     <span
                       style={{
                         fontSize: Math.max(9, Math.min(12, h * 0.055)),
-                        color: isOn
-                          ? on.sub
-                          : isDark
-                            ? "#64748b"
-                            : "#94a3b8",
+                        color: isOn ? on.sub : isDark ? "#64748b" : "#94a3b8",
                       }}
                     >
                       {mon.width} × {mon.height} · {mon.max_hz}Hz
