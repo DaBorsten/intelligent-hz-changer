@@ -62,6 +62,7 @@ function buildProfiles(
 
 const CANVAS_H = 320;
 const CANVAS_PAD = 28;
+const MONITOR_GAP = 6;
 
 export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   const { t } = useTranslation();
@@ -133,6 +134,8 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
 
   useEffect(() => {
     if (!canvasRef.current) return;
+    // Measure now so the tiles don't first lay out against the default width.
+    setCanvasWidth(canvasRef.current.clientWidth);
     const obs = new ResizeObserver((entries) => {
       setCanvasWidth(entries[0].contentRect.width);
     });
@@ -215,27 +218,26 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
   return (
     <div className="space-y-4">
       {backendError && (
-        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
-          <div className="text-sm font-semibold text-red-700 dark:text-red-300">
+        <div className="rounded-lg border border-accent-line bg-accent-soft px-4 py-3">
+          <div className="text-sm font-semibold text-accent-text">
             {t("monitor.backendError.title")}
           </div>
-          <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5">
+          <div className="text-xs text-accent-text/90 mt-0.5">
             {backendError}
           </div>
         </div>
       )}
 
       {/* Visual monitor canvas */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4">
+      <div className="card overflow-hidden">
         <div
           ref={canvasRef}
-          className="relative rounded-xl overflow-hidden"
+          className="relative overflow-hidden"
           style={{
             height: CANVAS_H,
-            backgroundColor: "transparent",
             backgroundImage:
-              "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
-            backgroundSize: "20px 20px",
+              "radial-gradient(var(--line-strong) 1px, transparent 1px)",
+            backgroundSize: "18px 18px",
           }}
         >
           {layout.map(
@@ -253,19 +255,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
               const label = isCloneGroup
                 ? t("monitor.labelClone")
                 : getMonitorLabel(mon, monitors, t);
-
-              const on = {
-                bg: isDark ? "#a83838" : "#d64545",
-                border: isDark ? "#bd4545" : "#c23a3a",
-                shadow: isDark
-                  ? "0 4px 16px rgba(0,0,0,0.45)"
-                  : "0 4px 16px rgba(214,69,69,0.2)",
-                label: "rgba(255,255,255,0.75)",
-                num: "white",
-                sub: "rgba(255,255,255,0.7)",
-                badgeBg: "rgba(255,255,255,0.2)",
-                badgeText: "white",
-              };
+              const tinyText = Math.max(9, Math.min(11, h * 0.06));
 
               return (
                 <div
@@ -273,71 +263,50 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                   onClick={() =>
                     patchProfile(groupDeviceNames, { enabled: !isOn })
                   }
-                  className="absolute rounded-xl cursor-pointer transition-[background-color,border-color,box-shadow] select-none flex flex-col monitor-card"
+                  className={`hl absolute rounded-[10px] border cursor-pointer select-none flex flex-col justify-between monitor-card ${
+                    isOn
+                      ? "bg-accent-soft border-accent-line-strong"
+                      : "bg-tile border-line-strong"
+                  }`}
                   style={{
-                    left,
-                    top,
-                    width: w,
-                    height: h,
-                    backgroundColor: isOn
-                      ? on.bg
-                      : isDark
-                        ? "#2a2a2a"
-                        : "white",
-                    border: `2px solid ${isOn ? on.border : isDark ? "#3f3f3f" : "#e2e8f0"}`,
-                    boxShadow: isOn
-                      ? on.shadow
-                      : isDark
-                        ? "0 2px 8px rgba(0,0,0,0.4)"
-                        : "0 2px 8px rgba(0,0,0,0.07)",
+                    // Adjacent monitors touch; the inset keeps their borders apart.
+                    left: left + MONITOR_GAP / 2,
+                    top: top + MONITOR_GAP / 2,
+                    width: w - MONITOR_GAP,
+                    height: h - MONITOR_GAP,
+                    padding: h < 100 ? "6px 8px" : "12px 14px",
+                    transition:
+                      "background-color 200ms var(--ease-out), border-color 200ms var(--ease-out)",
                   }}
                 >
-                  <div className="flex items-center justify-between px-2 pt-1.5 shrink-0">
+                  <div className="flex items-center justify-between gap-1 shrink-0">
                     <span
-                      className="font-bold tracking-widest"
-                      style={{
-                        fontSize: Math.max(9, Math.min(12, h * 0.06)),
-                        color: isOn ? on.label : isDark ? "#64748b" : "#94a3b8",
-                      }}
+                      className={`font-semibold tracking-[0.08em] truncate ${isOn ? "text-accent-text" : "text-muted"}`}
+                      style={{ fontSize: Math.min(10, tinyText) }}
                     >
                       {label}
                     </span>
                     {isOn && (
-                      <span
-                        className="font-bold rounded-full px-1.5 py-0.5"
-                        style={{
-                          fontSize: 7,
-                          backgroundColor: on.badgeBg,
-                          color: on.badgeText,
-                        }}
-                      >
+                      <span className="text-[10px] font-semibold text-white bg-accent rounded-full px-1.75 py-px shrink-0">
                         {t("monitor.activeBadge")}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex-1 flex items-center justify-center">
-                    <span
-                      className="font-black leading-none"
-                      style={{
-                        fontSize: Math.min(h * 0.42, isCloneGroup ? 52 : 72),
-                        color: isOn ? on.num : isDark ? "#cbd5e1" : "#1e293b",
-                        letterSpacing: isCloneGroup ? "-0.02em" : undefined,
-                      }}
-                    >
-                      {displayNum}
-                    </span>
+                  <div
+                    className={`text-center font-semibold leading-none ${isOn ? "text-fg" : "text-fg-3"}`}
+                    style={{
+                      fontSize: Math.min(h * 0.27, isCloneGroup ? 40 : 52),
+                    }}
+                  >
+                    {displayNum}
                   </div>
 
-                  <div className="text-center pb-2 shrink-0">
-                    <span
-                      style={{
-                        fontSize: Math.max(9, Math.min(12, h * 0.055)),
-                        color: isOn ? on.sub : isDark ? "#64748b" : "#94a3b8",
-                      }}
-                    >
-                      {mon.width} × {mon.height} · {mon.max_hz}Hz
-                    </span>
+                  <div
+                    className={`text-center font-mono truncate shrink-0 ${isOn ? "text-fg-2" : "text-muted"}`}
+                    style={{ fontSize: tinyText }}
+                  >
+                    {mon.width} × {mon.height} · {mon.max_hz} Hz
                   </div>
                 </div>
               );
@@ -345,33 +314,26 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
           )}
         </div>
 
-        <div className="flex items-center gap-3 mt-3">
+        <div className="flex items-center gap-3 px-4 py-3 border-t border-line-subtle">
           <button
             onClick={() =>
               void invoke("identify_monitors", {
                 theme: isDark ? "dark" : "light",
               }).catch(console.error)
             }
-            className="px-3 py-1.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-lg text-xs font-medium
-                       text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#333] transition-colors shadow-sm"
+            className="btn hl btn-press"
           >
             {t("monitor.identify")}
           </button>
-          <span className="text-xs text-slate-400 dark:text-slate-500">
-            {t("monitor.clickHint")}
-          </span>
+          <span className="text-xs text-muted">{t("monitor.clickHint")}</span>
         </div>
       </div>
 
-      {/* Per-monitor global settings */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-4 space-y-3">
-        <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            {t("monitor.globalTitle")}
-          </h2>
-          <span className="text-xs text-slate-400 dark:text-slate-500">
-            {t("monitor.globalHint")}
-          </span>
+      {/* Per-monitor global settings. No overflow-hidden: selects open past the card. */}
+      <div className="card">
+        <div className="flex items-baseline flex-wrap gap-2 px-4 py-3.5">
+          <h2 className="font-semibold">{t("monitor.globalTitle")}</h2>
+          <span className="text-xs text-muted">{t("monitor.globalHint")}</span>
         </div>
 
         {sortedMonitors.map((mon) => {
@@ -382,28 +344,28 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
           return (
             <div
               key={mon.device_name}
-              className="rounded-xl border border-black/6 dark:border-white/6 bg-white dark:bg-[#2a2a2a] p-3 space-y-3"
+              className="border-t border-line-subtle px-4 py-3.5 space-y-3.5"
             >
               <div className="flex items-center gap-3">
                 <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0 text-sm ${
+                  className={`w-6 h-6 rounded-md flex items-center justify-center font-semibold shrink-0 text-xs ${
                     profile.enabled
-                      ? "bg-red-500 text-white shadow-sm shadow-red-500/30"
-                      : "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300"
+                      ? "bg-accent text-white"
+                      : "bg-chip border border-line-strong text-muted"
                   }`}
                 >
                   {num}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate select-text">
+                  <div className="font-semibold truncate select-text">
                     {mon.friendly_name}
                   </div>
-                  <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate select-text">
+                  <div className="text-[11px] text-muted font-mono mt-0.5 truncate select-text">
                     {mon.width} × {mon.height} ·{" "}
                     {t("monitor.upTo", { hz: mon.max_hz })}
                   </div>
                 </div>
-                <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
+                <span className="text-xs text-fg-3 shrink-0">
                   {t(
                     profile.enabled ? "monitor.switchOn" : "monitor.switchOff",
                   )}
@@ -417,12 +379,12 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                 />
               </div>
 
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="space-y-1.5">
                   <span
-                    className={`flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 ${profile.enabled ? "" : "opacity-60"}`}
+                    className={`flex items-center gap-1.5 text-[11px] text-muted ${profile.enabled ? "" : "opacity-60"}`}
                   >
-                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent" />
                     {t("monitor.gameHz")}
                   </span>
                   <CustomSelect
@@ -434,11 +396,11 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                     dimmed={!profile.enabled}
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <span
-                    className={`flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 ${profile.enabled ? "" : "opacity-60"}`}
+                    className={`flex items-center gap-1.5 text-[11px] text-muted ${profile.enabled ? "" : "opacity-60"}`}
                   >
-                    <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-faint" />
                     {t("monitor.defaultHz")}
                   </span>
                   <CustomSelect
@@ -457,8 +419,7 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
                     void handleTestHz(mon.device_name, profile.game_hz)
                   }
                   disabled={testing !== null}
-                  className={`${profile.enabled ? "" : "opacity-60"} px-3 py-2 bg-[#f0eeeb] dark:bg-[#1e1e1e] border border-black/8 dark:border-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium
-                             rounded-xl hover:bg-slate-200 dark:hover:bg-[#333] disabled:opacity-40 transition-colors`}
+                  className={`btn hl btn-press h-8.5 ${profile.enabled ? "" : "opacity-60"}`}
                 >
                   {isTesting
                     ? t("monitor.testing")
@@ -478,42 +439,37 @@ export function MonitorConfig({ config, onChange, onSave, saving }: Props) {
         {disconnected.map((name) => (
           <p
             key={name}
-            className="text-xs text-slate-400 dark:text-slate-500 italic"
+            className="text-xs text-muted italic border-t border-line-subtle px-4 py-3"
           >
             {t("monitor.disconnected", { name })}
           </p>
         ))}
-      </div>
 
-      {testError && (
-        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
-          <div className="text-sm font-semibold text-red-700 dark:text-red-300">
-            {t("monitor.testFailed", { hz: testError.hz })}
-          </div>
-          <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5 wrap-break-word select-text">
-            {testError.error}
-          </div>
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="sticky bottom-5 flex justify-end">
-        <div className="flex items-center gap-2 bg-white dark:bg-[#1c1c1c] border border-black/8 dark:border-white/8 rounded-2xl shadow-lg px-2 py-2">
+        {/* One save covers every monitor above, so it stays reachable while scrolling. */}
+        <div className="sticky bottom-0 flex items-center justify-end gap-3 px-4 py-3 border-t border-line-subtle bg-surface rounded-b-[11px]">
           {saveMsg && (
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
-              {saveMsg}
-            </span>
+            <span className="text-xs text-muted font-medium">{saveMsg}</span>
           )}
           <button
             onClick={handleSave}
             disabled={saving || !isDirty}
-            className="flex items-center gap-2 px-5 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-slate-200 dark:hover:bg-slate-300
-                       disabled:opacity-50 text-white dark:text-slate-900 text-sm font-semibold rounded-xl transition-colors"
+            className="h-8.5 px-4 rounded-lg bg-fg text-surface text-xs font-semibold shadow-ctl hover:opacity-90 disabled:opacity-50 disabled:cursor-default transition-opacity btn-press"
           >
             {saving ? t("monitor.saving") : t("monitor.saveBtn")}
           </button>
         </div>
       </div>
+
+      {testError && (
+        <div className="rounded-lg border border-accent-line bg-accent-soft px-4 py-3">
+          <div className="text-sm font-semibold text-accent-text">
+            {t("monitor.testFailed", { hz: testError.hz })}
+          </div>
+          <div className="text-xs text-accent-text/90 mt-0.5 wrap-break-word select-text">
+            {testError.error}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

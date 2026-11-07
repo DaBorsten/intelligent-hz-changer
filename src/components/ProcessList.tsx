@@ -103,6 +103,23 @@ function overrideBadge(
   return hz.size === 1 && only > 0 ? `${only} Hz` : custom;
 }
 
+function FolderIcon({ size }: { size: number }) {
+  return (
+    <svg
+      className="shrink-0"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinejoin="round"
+    >
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  );
+}
+
 export function ProcessList({ config, onChange }: Props) {
   const processes = config.watched_processes;
   const disabled = config.disabled_processes;
@@ -449,84 +466,55 @@ export function ProcessList({ config, onChange }: Props) {
     <>
       <div className="space-y-4">
         {/* Add process card */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1 relative z-10">
-          <div className="flex items-center justify-between mb-3">
+        <div className="card p-4 flex flex-col gap-3 anim-fade-up stagger-1 relative z-10">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {t("processes.addTitle")}
-              </h2>
-              <span className="text-xs text-slate-400 dark:text-slate-500">
+              <h2 className="font-semibold">{t("processes.addTitle")}</h2>
+              <span className="text-xs text-muted">
                 {t(platformKey("processes.addHint"))}
               </span>
             </div>
-            <button
-              onClick={openPicker}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-[#2a2a2a] hover:bg-slate-50 dark:hover:bg-[#333] transition-colors btn-press shrink-0"
-            >
+            <button onClick={openPicker} className="btn hl btn-press shrink-0">
               {t("processes.pickRunning")}
             </button>
           </div>
 
-          {addError && <p className="text-xs text-red-500 mb-1">{addError}</p>}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-              >
-                <path
-                  d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z"
-                  stroke="#94a3b8"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
-              </svg>
+          {addError && <p className="text-xs text-accent-text">{addError}</p>}
+          <div className="flex flex-wrap gap-2">
+            <label className="field hl flex-[1_1_320px]">
+              <FolderIcon size={15} />
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
                 placeholder={t(platformKey("processes.inputPlaceholder"))}
-                className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
-                           text-sm font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none
-                           focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all"
+                className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[12.5px] text-fg placeholder-faint"
               />
-            </div>
+            </label>
             <button
               onClick={() => void browseExe((path) => setInput(path))}
               title={t(platformKey("processes.browseExeTitle"))}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-[#333] text-sm transition-colors btn-press"
+              className="btn hl btn-press h-9 px-3.5 gap-2"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M1.5 3h4l1.5 1.5H12.5v7.5H1.5z"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <FolderIcon size={14} />
               {t("processes.browse")}
             </button>
             <button
               onClick={() => void add()}
               disabled={!input.trim()}
-              className="flex items-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-600
-                         disabled:opacity-40 text-white text-sm font-semibold rounded-xl shadow-sm shadow-red-500/20 btn-press"
-              style={{
-                transition:
-                  "background-color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-              }}
+              className="btn-accent btn-press h-9 px-3.5 gap-1.5"
             >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M6 1v10M1 6h10"
-                  stroke="white"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <path d="M12 5v14M5 12h14" />
               </svg>
               {t("processes.add")}
             </button>
@@ -534,181 +522,153 @@ export function ProcessList({ config, onChange }: Props) {
         </div>
 
         {/* Process list */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              {t("processes.watchedHeader", { count: processes.length })}
-            </h2>
+        <div className="card overflow-hidden anim-fade-up stagger-2">
+          <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
+            <h2 className="font-semibold">{t("processes.watchedHeader")}</h2>
+            <span className="font-mono text-[11px] text-fg-3 bg-chip border border-line-strong rounded-full px-1.75">
+              {processes.length}
+            </span>
           </div>
           {processes.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500 italic">
+            <p className="text-muted italic px-4 py-3 border-t border-line-subtle">
               {t("processes.noProcesses")}
             </p>
           ) : (
-            <div className="space-y-2">
-              {processes.map((wp, idx) => {
-                const key = wpKey(wp);
-                const name = wpName(wp);
-                const path = typeof wp === "string" ? null : wp.path;
-                const iconKey = name.toLowerCase();
-                const icon = processIcons[iconKey];
-                const isRunning = runningKeys.some((r) => r === key);
-                const isEnabled = !disabled.includes(key);
-                const badge = overrideBadge(
-                  overrides[key],
-                  t("processes.customHz"),
-                );
+            processes.map((wp, idx) => {
+              const key = wpKey(wp);
+              const name = wpName(wp);
+              const path = typeof wp === "string" ? null : wp.path;
+              const iconKey = name.toLowerCase();
+              const icon = processIcons[iconKey];
+              const isRunning = runningKeys.some((r) => r === key);
+              const isEnabled = !disabled.includes(key);
+              const badge = overrideBadge(
+                overrides[key],
+                t("processes.customHz"),
+              );
+              const lastSeenText = formatLastSeen(wp);
 
-                return (
+              return (
+                <div
+                  key={key}
+                  className={`flex items-center gap-3.5 px-4 py-3 border-t border-line-subtle process-row ${
+                    removingProcesses.has(key) ? "process-row-removing" : ""
+                  }`}
+                  style={{ animationDelay: `${Math.min(idx, 7) * 35}ms` }}
+                >
                   <div
-                    key={key}
-                    className={`rounded-xl border process-row ${
-                      isRunning
-                        ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800/50"
-                        : "bg-white dark:bg-[#2a2a2a] border-black/6 dark:border-white/6 hover:border-black/12 dark:hover:border-white/12"
-                    } ${removingProcesses.has(key) ? "process-row-removing" : ""}`}
+                    className={`flex flex-1 min-w-0 items-center gap-3.5 ${isEnabled ? "" : "opacity-45 grayscale"}`}
                     style={{
-                      animationDelay: `${Math.min(idx, 7) * 35}ms`,
                       transition:
-                        "background-color 200ms cubic-bezier(0.23,1,0.32,1), border-color 200ms cubic-bezier(0.23,1,0.32,1)",
+                        "opacity 200ms cubic-bezier(0.23,1,0.32,1), filter 200ms cubic-bezier(0.23,1,0.32,1)",
                     }}
                   >
-                    <div className="flex items-center gap-3 px-3 py-3">
-                      <div
-                        className={`flex flex-1 min-w-0 items-center gap-3 ${isEnabled ? "" : "opacity-45 grayscale"}`}
-                        style={{
-                          transition:
-                            "opacity 200ms cubic-bezier(0.23,1,0.32,1), filter 200ms cubic-bezier(0.23,1,0.32,1)",
-                        }}
-                      >
-                        <div
-                          className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
-                            icon
-                              ? "bg-transparent"
-                              : isRunning
-                                ? "bg-red-500 shadow-sm shadow-red-500/30"
-                                : "bg-slate-200 dark:bg-slate-700"
-                          }`}
-                        >
-                          {icon ? (
-                            <img
-                              src={icon}
-                              alt=""
-                              className="w-9 h-9 object-contain"
-                            />
-                          ) : (
-                            <svg
-                              width="10"
-                              height="10"
-                              viewBox="0 0 10 10"
-                              fill="none"
-                            >
-                              <path
-                                d="M3 2l5 3-5 3V2z"
-                                fill={isRunning ? "white" : "#94a3b8"}
-                              />
-                            </svg>
-                          )}
-                        </div>
+                    <div
+                      className={`w-8.5 h-8.5 rounded-lg flex items-center justify-center shrink-0 overflow-hidden font-semibold ${
+                        icon
+                          ? "bg-transparent"
+                          : isRunning
+                            ? "bg-accent text-white"
+                            : "bg-chip border border-line-strong text-fg-2"
+                      }`}
+                    >
+                      {icon ? (
+                        <img
+                          src={icon}
+                          alt=""
+                          className="w-8.5 h-8.5 object-contain"
+                        />
+                      ) : (
+                        name.charAt(0).toUpperCase()
+                      )}
+                    </div>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-semibold font-mono text-slate-800 dark:text-slate-100 truncate select-text">
-                            {name}
-                          </div>
-                          {path && (
-                            <div
-                              className="text-xs font-mono text-slate-400 dark:text-slate-500 truncate select-text"
-                              title={path}
-                            >
-                              {path}
-                            </div>
-                          )}
-                          <div className="text-xs text-slate-400 dark:text-slate-500">
-                            {formatLastSeen(wp)}
-                          </div>
-                        </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono font-medium truncate select-text">
+                        {name}
                       </div>
-
-                      {badge && (
-                        <span
-                          className="text-xs font-semibold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full shrink-0 tabular-nums"
-                          title={t("processes.customHzTitle")}
+                      {path && (
+                        <div
+                          className="font-mono text-[11px] text-faint mt-0.75 truncate select-text"
+                          title={path}
                         >
-                          {badge}
-                        </span>
+                          {path}
+                        </div>
                       )}
-
-                      {isRunning && (
-                        <span className="text-xs font-bold bg-red-500 text-white px-2.5 py-0.5 rounded-full shrink-0">
-                          {t("processes.active")}
-                        </span>
+                      {lastSeenText && (
+                        <div className="text-[11px] text-muted mt-0.75">
+                          {lastSeenText}
+                        </div>
                       )}
-
-                      <Switch
-                        checked={isEnabled}
-                        onChange={(v) => setEnabled(wp, v)}
-                        title={t(
-                          isEnabled
-                            ? "processes.pauseTitle"
-                            : "processes.resumeTitle",
-                        )}
-                      />
-
-                      <button
-                        onClick={() => openEditDialog(wp)}
-                        className="w-6 h-6 flex items-center justify-center text-slate-300 dark:text-slate-600
-                                   hover:text-slate-500 dark:hover:text-slate-400 shrink-0 rounded btn-press"
-                        style={{
-                          transition:
-                            "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-                        }}
-                        title={t("processes.editTitle")}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z"
-                            stroke="currentColor"
-                            strokeWidth="1.3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </button>
-
-                      <button
-                        onClick={() => remove(wp)}
-                        className="w-6 h-6 flex items-center justify-center text-slate-300 dark:text-slate-600
-                                   hover:text-slate-500 dark:hover:text-slate-400 shrink-0 rounded btn-press"
-                        style={{
-                          transition:
-                            "color 150ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1)",
-                        }}
-                        title={t("processes.removeTitle")}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M2 2l8 8M10 2l-8 8"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  {badge && (
+                    <span
+                      className="text-[11px] font-medium bg-chip border border-line-strong text-fg-3 px-2 py-0.5 rounded-full shrink-0 tabular-nums"
+                      title={t("processes.customHzTitle")}
+                    >
+                      {badge}
+                    </span>
+                  )}
+
+                  {isRunning && (
+                    <span className="text-[11px] font-semibold bg-accent-soft border border-accent-line text-accent-text px-2 py-0.5 rounded-full shrink-0">
+                      {t("processes.active")}
+                    </span>
+                  )}
+
+                  <Switch
+                    checked={isEnabled}
+                    onChange={(v) => setEnabled(wp, v)}
+                    title={t(
+                      isEnabled
+                        ? "processes.pauseTitle"
+                        : "processes.resumeTitle",
+                    )}
+                  />
+
+                  <button
+                    onClick={() => openEditDialog(wp)}
+                    className="btn-icon btn-press"
+                    title={t("processes.editTitle")}
+                    aria-label={t("processes.editTitle")}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+                    </svg>
+                  </button>
+
+                  <button
+                    onClick={() => remove(wp)}
+                    className="btn-icon btn-press"
+                    title={t("processes.removeTitle")}
+                    aria-label={t("processes.removeTitle")}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    >
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -733,21 +693,21 @@ export function ProcessList({ config, onChange }: Props) {
             }}
           >
             <div
-              className="w-full max-w-sm mx-4 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-xl flex flex-col overflow-hidden"
+              className="w-full max-w-sm mx-4 rounded-xl border border-line-strong bg-surface shadow-xl flex flex-col overflow-hidden"
               style={{ maxHeight: "min(520px, calc(100vh - 80px))" }}
             >
-              <div className="flex items-start justify-between p-4 border-b border-black/6 dark:border-white/6 shrink-0">
+              <div className="flex items-start justify-between p-4 border-b border-line-subtle shrink-0">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  <h3 className="text-sm font-semibold text-fg">
                     {t("processes.pickerTitle")}
                   </h3>
-                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                  <p className="text-xs text-muted mt-0.5">
                     {t("processes.pickerHint")}
                   </p>
                 </div>
                 <button
                   onClick={() => setPickerOpen(false)}
-                  className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded transition-colors ml-2 shrink-0"
+                  className="w-6 h-6 flex items-center justify-center text-muted hover:text-fg rounded transition-colors ml-2 shrink-0"
                 >
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
@@ -759,10 +719,10 @@ export function ProcessList({ config, onChange }: Props) {
                   </svg>
                 </button>
               </div>
-              <div className="p-3 border-b border-black/6 dark:border-white/6 shrink-0">
+              <div className="p-3 border-b border-line-subtle shrink-0">
                 <div className="relative">
                   <svg
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-muted"
                     width="12"
                     height="12"
                     viewBox="0 0 12 12"
@@ -791,17 +751,17 @@ export function ProcessList({ config, onChange }: Props) {
                       if (e.key === "Escape") setPickerOpen(false);
                     }}
                     placeholder={t("processes.pickerSearch")}
-                    className="w-full pl-8 pr-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#2a2a2a] border border-black/8 dark:border-white/8 text-slate-800 dark:text-slate-100 placeholder-slate-400 outline-none focus:border-red-400 focus:ring-1 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all"
+                    className="w-full pl-8 pr-3 py-2 text-xs rounded-lg bg-well border border-line-strong text-fg placeholder-faint outline-none focus:border-accent-line transition-all"
                   />
                 </div>
               </div>
               <div className="overflow-y-auto flex-1">
                 {pickerLoading ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
+                  <p className="text-xs text-muted text-center py-6">
                     {t("processes.loading")}
                   </p>
                 ) : filteredPicker.length === 0 ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
+                  <p className="text-xs text-muted text-center py-6">
                     {t("processes.noRunning")}
                   </p>
                 ) : (
@@ -815,10 +775,10 @@ export function ProcessList({ config, onChange }: Props) {
                     return (
                       <div
                         key={rp.name}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-[#2a2a2a] transition-colors"
+                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-chip transition-colors"
                       >
                         <div
-                          className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-slate-100 dark:bg-slate-700"}`}
+                          className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-chip"}`}
                         >
                           {icon ? (
                             <img
@@ -839,31 +799,31 @@ export function ProcessList({ config, onChange }: Props) {
                                 width="13"
                                 height="11"
                                 rx="2"
-                                stroke="#94a3b8"
+                                stroke="currentColor"
                                 strokeWidth="1.3"
                               />
                               <path
                                 d="M1.5 6h13"
-                                stroke="#94a3b8"
+                                stroke="currentColor"
                                 strokeWidth="1.1"
                               />
-                              <circle cx="4" cy="4.25" r="0.8" fill="#94a3b8" />
+                              <circle cx="4" cy="4.25" r="0.8" fill="currentColor" />
                               <circle
                                 cx="6.5"
                                 cy="4.25"
                                 r="0.8"
-                                fill="#94a3b8"
+                                fill="currentColor"
                               />
                               <path
                                 d="M4.5 9l2.5 1.5-2.5 1.5"
-                                stroke="#94a3b8"
+                                stroke="currentColor"
                                 strokeWidth="1.1"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                               />
                               <path
                                 d="M9 11.5h2"
-                                stroke="#94a3b8"
+                                stroke="currentColor"
                                 strokeWidth="1.1"
                                 strokeLinecap="round"
                               />
@@ -872,13 +832,13 @@ export function ProcessList({ config, onChange }: Props) {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div
-                            className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}
+                            className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-muted" : "text-fg"}`}
                           >
                             {rp.name}
                           </div>
                           {rp.path && (
                             <div
-                              className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate mt-0.5"
+                              className="text-[10px] font-mono text-muted truncate mt-0.5"
                               title={rp.path}
                             >
                               {rp.path}
@@ -906,7 +866,7 @@ export function ProcessList({ config, onChange }: Props) {
                         ) : (
                           <button
                             onClick={() => pickProcess(rp)}
-                            className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 shrink-0 transition-colors font-medium btn-press"
+                            className="flex items-center gap-1 text-xs text-muted hover:text-accent-text shrink-0 transition-colors font-medium btn-press"
                           >
                             <svg
                               width="11"
@@ -953,13 +913,13 @@ export function ProcessList({ config, onChange }: Props) {
               editBackdropPointerStartedOutside.current = false;
             }}
           >
-            <div className="w-full max-w-md mx-4 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#242424] shadow-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <div className="w-full max-w-md mx-4 rounded-xl border border-line-strong bg-well shadow-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-fg">
                 {t("processes.editProcess")}
               </h3>
 
               <div className="space-y-1">
-                <label className="text-xs text-slate-500 dark:text-slate-400">
+                <label className="text-xs text-muted">
                   {t("processes.processName")}
                 </label>
                 <input
@@ -973,16 +933,16 @@ export function ProcessList({ config, onChange }: Props) {
                     if (e.key === "Escape") closeEditDialog();
                   }}
                   placeholder={t(platformKey("processes.namePlaceholder"))}
-                  className={`w-full px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border border-black/10 dark:border-white/10 rounded-xl
-                           text-sm font-mono text-slate-800 dark:text-slate-100 outline-none
-                           focus:border-red-400 focus:ring-2 focus:ring-red-100 dark:focus:ring-red-900/20 transition-all ${
+                  className={`w-full px-3 py-2 bg-surface border border-line-strong rounded-lg
+                           text-sm font-mono text-fg outline-none
+                           focus:border-accent-line transition-all ${
                              nameLocked ? "cursor-not-allowed opacity-75" : ""
                            }`}
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs text-slate-500 dark:text-slate-400">
+                <label className="text-xs text-muted">
                   {t("processes.pathFilter")}
                 </label>
                 <div className="flex gap-2">
@@ -995,12 +955,12 @@ export function ProcessList({ config, onChange }: Props) {
                       if (e.key === "Escape") closeEditDialog();
                     }}
                     placeholder={t(platformKey("processes.pathPlaceholder"))}
-                    className={`flex-1 px-3 py-2 bg-slate-50 dark:bg-[#2a2a2a] border rounded-xl
-                             text-xs font-mono text-slate-600 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 outline-none
+                    className={`flex-1 px-3 py-2 bg-surface border rounded-lg
+                             text-xs font-mono text-fg-3 placeholder-faint outline-none
                              focus:ring-2 transition-all ${
                                editPathError
-                                 ? "border-red-400 focus:border-red-400 focus:ring-red-100 dark:focus:ring-red-900/20"
-                                 : "border-black/8 dark:border-white/8 focus:border-red-400 focus:ring-red-100 dark:focus:ring-red-900/20"
+                                 ? "border-accent-line focus:border-accent-line"
+                                 : "border-line-strong focus:border-accent-line"
                              }`}
                   />
                   <button
@@ -1011,7 +971,7 @@ export function ProcessList({ config, onChange }: Props) {
                       })
                     }
                     title={t(platformKey("processes.browseExeTitle"))}
-                    className="px-3 py-2 rounded-xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#2a2a2a] text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#333] transition-colors btn-press"
+                    className="px-3 py-2 rounded-lg border border-line-strong bg-surface text-muted hover:bg-chip transition-colors btn-press"
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <path
@@ -1030,21 +990,21 @@ export function ProcessList({ config, onChange }: Props) {
                   </button>
                 </div>
                 {editPathError && (
-                  <p className="text-xs text-red-500">{editPathError}</p>
+                  <p className="text-xs text-accent-text">{editPathError}</p>
                 )}
               </div>
 
               <div className="space-y-2 pt-1">
                 <div>
-                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  <div className="text-xs font-semibold text-fg-2">
                     {t("processes.monitorsTitle")}
                   </div>
-                  <div className="text-xs text-slate-400 dark:text-slate-500">
+                  <div className="text-xs text-muted">
                     {t("processes.monitorsHint")}
                   </div>
                 </div>
                 {monitors === null ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 italic">
+                  <p className="text-xs text-muted italic">
                     {t("processes.monitorsLoading")}
                   </p>
                 ) : (
@@ -1081,23 +1041,23 @@ export function ProcessList({ config, onChange }: Props) {
                         return (
                           <div
                             key={dev}
-                            className="flex items-center gap-3 rounded-xl border border-black/6 dark:border-white/6 bg-slate-50 dark:bg-[#2a2a2a] px-3 py-2"
+                            className="flex items-center gap-3 rounded-lg border border-line-subtle bg-surface px-3 py-2"
                           >
                             <div
                               className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                                 value !== KEEP &&
                                 (value !== GLOBAL || profile?.enabled)
-                                  ? "bg-red-500 text-white"
-                                  : "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300"
+                                  ? "bg-accent text-white"
+                                  : "bg-chip border border-line-strong text-muted"
                               }`}
                             >
                               {nums.get(dev)}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <div className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                              <div className="text-xs font-semibold text-fg truncate">
                                 {mon.friendly_name}
                               </div>
-                              <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                              <div className="text-[11px] text-muted truncate">
                                 {getMonitorLabel(mon, monitors, t)} ·{" "}
                                 {t("monitor.upTo", { hz: mon.max_hz })}
                               </div>
@@ -1117,14 +1077,14 @@ export function ProcessList({ config, onChange }: Props) {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={closeEditDialog}
-                  className="flex-1 py-2 border border-black/10 dark:border-white/10 text-slate-600 dark:text-slate-300 text-sm rounded-xl hover:bg-slate-50 dark:hover:bg-[#2a2a2a] transition-colors btn-press"
+                  className="flex-1 py-2 border border-line-strong text-fg-3 text-sm rounded-lg hover:bg-chip transition-colors btn-press"
                 >
                   {t("processes.cancel")}
                 </button>
                 <button
                   onClick={() => void commitEditDialog()}
                   disabled={!editName.trim()}
-                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors btn-press"
+                  className="flex-1 py-2 btn-accent text-sm font-semibold rounded-lg transition-colors btn-press"
                 >
                   {t("processes.save")}
                 </button>

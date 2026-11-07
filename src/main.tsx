@@ -7,6 +7,8 @@ import App from "./App";
 import { applyStoredThemeClass } from "./theme";
 import { ThemeProvider } from "./ThemeContext";
 import "./i18n";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
 import "./index.css";
 
 applyStoredThemeClass();

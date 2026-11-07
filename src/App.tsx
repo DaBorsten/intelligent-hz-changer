@@ -7,6 +7,7 @@ import { MonitorConfig } from "./components/MonitorConfig";
 import { ProcessList } from "./components/ProcessList";
 import { SettingsTab } from "./components/SettingsTab";
 import { StatusView } from "./components/StatusView";
+import { Switch } from "./components/Switch";
 import { statusMonitor, type WatchConfig } from "./types";
 import { clearHzError, useHzStatus } from "./useHzStatus";
 
@@ -19,111 +20,24 @@ const DEFAULT_CONFIG: WatchConfig = {
   process_overrides: {},
 };
 
-function PulseIcon({ active }: { active?: boolean }) {
+function TabIcon({ children }: { children: React.ReactNode }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <path
-        d="M1 7.5h2.5l2-5 3 10 2-7 1.5 4 1.5-2H14"
-        stroke={active ? "#ef4444" : "currentColor"}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ListIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <line
-        x1="1.5"
-        y1="4"
-        x2="13.5"
-        y2="4"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <line
-        x1="1.5"
-        y1="7.5"
-        x2="13.5"
-        y2="7.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <line
-        x1="1.5"
-        y1="11"
-        x2="9"
-        y2="11"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function MonitorIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <rect
-        x="1"
-        y="2"
-        width="13"
-        height="9"
-        rx="1.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M5 13h5M7.5 11v2"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return <Settings size={15} />;
-}
-
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex items-center w-11 h-6 rounded-full shrink-0 btn-press ${
-        checked ? "bg-red-500" : "bg-slate-300 dark:bg-slate-600"
-      }`}
-      style={{
-        transition:
-          "background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)",
-      }}
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
     >
-      <span
-        className="inline-block w-4 h-4 bg-white rounded-full shadow"
-        style={{
-          transform: checked ? "translateX(1.5rem)" : "translateX(0.25rem)",
-          transition: "transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-        }}
-      />
-    </button>
+      {children}
+    </svg>
   );
 }
+
+const PULSE_PATH = "M22 12h-4l-3 9L9 3l-3 9H2";
 
 export default function App() {
   const { t } = useTranslation();
@@ -191,83 +105,112 @@ export default function App() {
     {
       id: "status",
       label: t("tabs.status"),
-      icon: <PulseIcon active={tab === "status"} />,
+      icon: (
+        <TabIcon>
+          <path d={PULSE_PATH} />
+        </TabIcon>
+      ),
     },
-    { id: "processes", label: t("tabs.processes"), icon: <ListIcon /> },
-    { id: "monitor", label: t("tabs.monitor"), icon: <MonitorIcon /> },
-    { id: "settings", label: t("tabs.settings"), icon: <SettingsIcon /> },
+    {
+      id: "processes",
+      label: t("tabs.processes"),
+      icon: (
+        <TabIcon>
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </TabIcon>
+      ),
+    },
+    {
+      id: "monitor",
+      label: t("tabs.monitor"),
+      icon: (
+        <TabIcon>
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </TabIcon>
+      ),
+    },
+    {
+      id: "settings",
+      label: t("tabs.settings"),
+      icon: <Settings size={14} />,
+    },
   ];
 
   return (
-    <div className="h-screen bg-[#f0eeeb] dark:bg-[#141414] flex flex-col overflow-hidden">
+    <div className="h-screen bg-canvas flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-white dark:bg-[#1c1c1c] border-b border-black/8 dark:border-white/8 px-5 py-3.5 flex items-center gap-3 shrink-0">
-        <div className="w-10 h-10 shrink-0 flex items-center justify-center">
-          <img
-            src="/intelligent-hz-changer.svg"
-            alt="Logo"
-            className="w-10 h-10"
-          />
+      <header className="flex items-center gap-3 px-5 pt-4 pb-3.5 shrink-0">
+        <div className="w-9 h-9 rounded-[10px] bg-accent flex items-center justify-center shrink-0 shadow-[inset_0_1px_rgba(255,255,255,0.25)]">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="2.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d={PULSE_PATH} />
+          </svg>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight">
+          <div className="text-[15px] font-semibold tracking-[-0.01em]">
             Intelligent Hz Changer
           </div>
-          <div className="text-xs text-slate-400 dark:text-slate-500 leading-tight">
-            {t("app.subtitle")}
-          </div>
+          <div className="text-xs text-muted mt-px">{t("app.subtitle")}</div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            {t("app.active")}
-          </span>
-          <Toggle
-            checked={active}
-            onChange={(v) => {
-              setActive(v);
-              invoke("set_enabled", { value: v }).catch(console.error);
-            }}
-          />
-        </div>
+        <span className="font-medium text-fg-2">{t("app.active")}</span>
+        <Switch
+          large
+          checked={active}
+          title={t("app.active")}
+          onChange={(v) => {
+            setActive(v);
+            invoke("set_enabled", { value: v }).catch(console.error);
+          }}
+        />
       </header>
 
       {/* Tab bar */}
-      <nav className="bg-[#f0eeeb] dark:bg-[#141414] px-4 pt-2 pb-0 flex items-center gap-1 shrink-0">
-        <div className="flex gap-1 flex-1">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-t-xl text-sm font-medium border-t border-x focus:outline-none btn-press ${
-                tab === t.id
-                  ? "bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-slate-100 border-black/8 dark:border-white/8 border-b-white dark:border-b-[#1c1c1c]"
-                  : "text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200"
-              }`}
-              style={{
-                transition:
-                  "color 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)",
-              }}
-            >
-              {t.icon}
-              {t.label}
-            </button>
-          ))}
-        </div>
+      <nav className="flex flex-wrap items-center gap-1 px-5 pb-3 border-b border-line-subtle shrink-0">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            aria-current={tab === t.id ? "page" : undefined}
+            className={`flex items-center gap-2 h-7.5 px-2.75 rounded-lg border font-medium btn-press ${
+              tab === t.id
+                ? "hl bg-tab-active border-line-strong text-fg [&>svg]:text-accent-text"
+                : "border-transparent text-fg-3 hover:text-fg"
+            }`}
+            style={{
+              transition:
+                "color 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1)",
+            }}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
+        <div className="flex-1" />
         {/* Hz status pill */}
-        <div className="flex items-center gap-1.5 pb-1">
+        <div className="hl flex items-center gap-2 h-7 px-2.5 rounded-lg border border-line-control bg-surface">
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${gameMode ? "bg-red-500 dot-pulse" : "bg-slate-400 dark:bg-slate-500"}`}
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${gameMode ? "bg-accent dot-pulse" : "bg-faint"}`}
           />
           <span
             key={String(gameMode)}
-            className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap badge-anim"
+            className="text-xs text-fg-3 whitespace-nowrap badge-anim"
           >
             {t(gameMode ? "mode.game" : "mode.standard")}
           </span>
           {headerHz != null && (
             <span
               key={headerHz}
-              className="text-xs font-bold text-slate-700 dark:text-slate-200 ml-0.5 badge-anim"
+              className="font-mono text-xs font-semibold badge-anim"
             >
               {headerHz} Hz
             </span>
@@ -276,24 +219,24 @@ export default function App() {
       </nav>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto bg-white dark:bg-[#1c1c1c] border-t border-black/8 dark:border-white/8">
+      <main className="flex-1 overflow-y-auto">
         {/* A refused Hz switch leaves the monitor on the wrong rate, which is
             invisible otherwise — so it is shown on every tab, not just the
             monitor one. */}
         {lastError && (
-          <div className="mx-5 mt-5 flex items-start gap-3 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/25 px-4 py-3">
+          <div className="mx-5 mt-5 flex items-start gap-3 rounded-xl border border-accent-line bg-accent-soft px-4 py-3">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-red-700 dark:text-red-300">
+              <div className="font-semibold text-accent-text">
                 {t("app.hzErrorTitle", { hz: lastError.target_hz })}
               </div>
-              <div className="text-xs text-red-600/90 dark:text-red-400/90 mt-0.5 wrap-break-word select-text">
+              <div className="text-xs text-accent-text/90 mt-0.5 wrap-break-word select-text">
                 {lastError.error}
               </div>
             </div>
             <button
               onClick={clearHzError}
               aria-label={t("app.dismiss")}
-              className="shrink-0 text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-200 text-lg leading-none px-1"
+              className="shrink-0 text-accent-text hover:opacity-70 text-lg leading-none px-1"
             >
               ×
             </button>

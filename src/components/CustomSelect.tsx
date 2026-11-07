@@ -45,16 +45,11 @@ export function CustomSelect({
           setOpen((o) => !o);
         }}
         className={`
-          flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all
-          bg-white dark:bg-[#1e1e1e]
-          border border-black/10 dark:border-white/8
-          text-slate-800 dark:text-slate-100
-          hover:bg-slate-50 dark:hover:bg-[#252525]
-          hover:border-black/15 dark:hover:border-white/13
-          disabled:opacity-50
-          shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_4px_rgba(0,0,0,0.4)]
+          hl flex items-center justify-between gap-2 min-w-30 h-8.5 px-2.5 rounded-lg font-mono text-xs transition-colors
+          bg-well border border-line-strong text-fg
+          hover:bg-chip disabled:opacity-50
           ${dimmed && !open ? "opacity-60" : ""}
-          ${open ? "border-red-400/60 dark:border-red-500/40 ring-2 ring-red-500/10 dark:ring-red-500/10" : ""}
+          ${open ? "border-accent-line" : ""}
         `}
       >
         <span className="relative">
@@ -71,7 +66,7 @@ export function CustomSelect({
           </span>
         </span>
         <svg
-          className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 shrink-0 ${open ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 text-muted transition-transform duration-200 shrink-0 ${open ? "rotate-180" : ""}`}
           viewBox="0 0 12 12"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
@@ -89,11 +84,9 @@ export function CustomSelect({
       {open && (
         <div
           className={`
-          absolute right-0 z-50 ${openUp ? "bottom-full mb-1.5" : "mt-1.5"} min-w-full max-h-64 overflow-y-auto
-          bg-white dark:bg-[#1e1e1e]
-          border border-black/10 dark:border-white/8
-          rounded-xl
-          shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.6)]
+          absolute right-0 z-50 ${openUp ? "bottom-full mb-1.5" : "mt-1.5"} min-w-full max-h-64 overflow-y-auto p-1 dropdown-anim
+          bg-surface border border-line-strong rounded-lg
+          shadow-[0_8px_24px_rgba(0,0,0,0.25)]
         `}
         >
           {options.map((opt) => {
@@ -107,11 +100,11 @@ export function CustomSelect({
                   setOpen(false);
                 }}
                 className={`
-                  w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium text-left transition-colors
+                  w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md font-mono text-xs text-left transition-colors
                   ${
                     isActive
-                      ? "bg-red-50 dark:bg-red-500/20 text-red-600 dark:text-red-400"
-                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                      ? "bg-accent-soft text-accent-text"
+                      : "text-fg-2 hover:bg-chip"
                   }
                 `}
               >

@@ -14,20 +14,123 @@ textarea,
   user-select: text;
 }
 
+/* ── Design tokens ────────────────────────────────────── */
+:root {
+  --canvas: #fafafa;
+  --surface: #ffffff;
+  --well: #f5f5f5;
+  --control: #ffffff;
+  --control-hover: #f5f5f5;
+  --chip: #f5f5f5;
+  --tile: #ffffff;
+  --selected: #ffffff;
+  --tab-active: #ffffff;
+  --line: #e5e5e5;
+  --line-subtle: #eeeeee;
+  --line-control: #e5e5e5;
+  --line-strong: #d9d9d9;
+  --fg: #0a0a0a;
+  --fg-2: #404040;
+  --fg-3: #525252;
+  --muted: #6b6b6b;
+  --faint: #737373;
+  --dot: #a3a3a3;
+  --accent: #dc2626;
+  --accent-text: #b91c1c;
+  --accent-soft: rgba(220, 38, 38, 0.1);
+  --accent-line: rgba(220, 38, 38, 0.4);
+  --accent-line-strong: rgba(220, 38, 38, 0.55);
+  --switch-off: #d4d4d4;
+  --highlight: transparent;
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  --canvas: #141416;
+  --surface: #1c1c1f;
+  --well: #131315;
+  --control: #26262a;
+  --control-hover: #303035;
+  --chip: #2a2a2f;
+  --tile: #222226;
+  --selected: #34343a;
+  --tab-active: #2e2e33;
+  --line: #2e2e33;
+  --line-subtle: #27272b;
+  --line-control: #38383e;
+  --line-strong: #44444b;
+  --fg: #fafafa;
+  --fg-2: #dcdce0;
+  --fg-3: #b0b0b6;
+  --muted: #9a9aa1;
+  --faint: #85858c;
+  --dot: #63636b;
+  --accent-text: rgb(234, 125, 125);
+  --accent-soft: rgba(220, 38, 38, 0.14);
+  --switch-off: #4a4a52;
+  --highlight: rgba(255, 255, 255, 0.13);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-well: var(--well);
+  --color-chip: var(--chip);
+  --color-tile: var(--tile);
+  --color-selected: var(--selected);
+  --color-tab-active: var(--tab-active);
+  --color-line: var(--line);
+  --color-line-subtle: var(--line-subtle);
+  --color-line-control: var(--line-control);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-dot: var(--dot);
+  --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-accent-line-strong: var(--accent-line-strong);
+  --color-switch-off: var(--switch-off);
+  --shadow-ctl: var(--shadow-control);
+}
+
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
-  background: #f0eeeb;
-  color: #1e293b;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: var(--canvas);
+  color: var(--fg);
   overflow: hidden;
 }
 
-.dark body {
-  background: #141414;
-  color: #f1f5f9;
+/* Film grain over the whole window, dialogs included. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Layered so `outline-none` on bordered inputs still wins. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent-line-strong);
+    outline-offset: 1px;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -39,16 +142,135 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8;
+  background: var(--line-strong);
   border-radius: 3px;
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
-}
+/* ── Shared surfaces and controls ─────────────────────── */
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
 
-.dark ::-webkit-scrollbar-track {
-  background: #1a1a1a;
+  /* Raised edge: soft drop shadow plus a one-pixel top highlight. */
+  .hl {
+    position: relative;
+    box-shadow: var(--shadow-control);
+  }
+
+  .hl::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 -1px var(--highlight);
+    pointer-events: none;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--control);
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: var(--control-hover);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+  }
+
+  .btn-accent {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow:
+      inset 0 1px rgba(255, 255, 255, 0.22),
+      var(--shadow-control);
+  }
+
+  .btn-accent:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .btn-accent:disabled {
+    opacity: 0.4;
+  }
+
+  .btn-icon {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--muted);
+  }
+
+  .btn-icon:hover {
+    color: var(--fg);
+    background: var(--chip);
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--well);
+    color: var(--faint);
+  }
+
+  .field:focus-within {
+    border-color: var(--accent-line-strong);
+  }
+
+  .segmented {
+    display: flex;
+    padding: 2px;
+    border: 1px solid var(--line-control);
+    border-radius: 8px;
+    background: var(--well);
+  }
+
+  .segmented-item {
+    border-radius: 6px;
+    padding: 4px 10px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .segmented-item:hover {
+    color: var(--fg);
+  }
+
+  .segmented-item[aria-pressed="true"] {
+    background: var(--selected);
+    color: var(--fg);
+  }
 }
 
 /* ── Custom easing curves ─────────────────────────────── */
@@ -181,7 +403,8 @@ body {
     opacity 140ms var(--ease-out);
 }
 
-.btn-press:active {
+/* Unlayered, so it would beat `disabled:opacity-*` — keep it off disabled buttons. */
+.btn-press:active:not(:disabled) {
   transform: scale(0.96);
   opacity: 0.85;
 }

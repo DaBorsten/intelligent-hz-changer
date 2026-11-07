@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { SegmentedControl } from "./SegmentedControl";
 import type {
   HzChangedPayload,
   HzPoint,
@@ -132,11 +133,13 @@ export function StatusView({
     };
   }, [i18n, monitorName]);
 
+  // Derived from the ticking `now` so the count resets at midnight; the string
+  // only changes once a day, so the memo below doesn't rerun every tick.
+  const today = new Date(now).toDateString();
   // Only real process edges count as an automatic switch; "system" covers
   // the startup ping, pause/resume and config saves.
   const todaySwitches = useMemo(() => {
     // One game start that switched several monitors is still one switch.
-    const today = new Date().toDateString();
     return new Set(
       log
         .filter(
@@ -146,7 +149,7 @@ export function StatusView({
         )
         .map((e) => e.batch ?? -e.id),
     ).size;
-  }, [log]);
+  }, [log, today]);
 
   // Name the monitor per entry only once there is more than one to tell apart.
   const multiMonitorLog =
@@ -272,46 +275,44 @@ export function StatusView({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-4">
         {/* Current Hz card */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-1">
-          <div className="flex items-start justify-between mb-2">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              {t("status.currentHz")}
-            </span>
+        <div className="card p-5 flex flex-col gap-1.5 min-h-62 anim-fade-up stagger-1">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold">{t("status.currentHz")}</span>
             <span
               key={mode}
-              className={`text-xs font-bold px-2.5 py-0.5 rounded-full badge-anim ${
+              className={`flex items-center gap-1.5 text-[11px] font-medium px-2.25 py-0.5 rounded-full border badge-anim ${
                 mode === "GAME"
-                  ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400"
-                  : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                  ? "bg-accent-soft border-accent-line text-accent-text"
+                  : "bg-chip border-line-strong text-fg-3"
               }`}
             >
-              {mode === "GAME"
-                ? `● ${t("status.badgeGame")}`
-                : `● ${t("mode.standard").toUpperCase()}`}
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${mode === "GAME" ? "bg-accent" : "bg-faint"}`}
+              />
+              {t(mode === "GAME" ? "mode.game" : "mode.standard")}
             </span>
           </div>
-          <div className="flex items-baseline gap-1.5">
+          <div className="flex items-baseline gap-2 mt-3.5">
             <span
               ref={hzRef}
-              className="text-6xl font-black text-slate-900 dark:text-slate-100 leading-none tabular-nums"
+              className="text-[64px] font-semibold leading-none tracking-[-0.03em] tabular-nums"
             >
               {currentHz ?? "—"}
             </span>
             {currentHz != null && (
-              <span className="text-2xl font-semibold text-slate-400 dark:text-slate-500">
-                Hz
-              </span>
+              <span className="text-xl font-medium text-faint">Hz</span>
             )}
           </div>
           {monitorLabel && (
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 font-mono truncate">
+            <p className="text-[11px] text-muted font-mono truncate">
               {monitorLabel}
             </p>
           )}
+          <div className="flex-1" />
           <Sparkline points={hzHistory} mode={mode} now={sparklineNow} />
-          <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
+          <div className="flex justify-between border-t border-line-subtle pt-3 mt-1.5 text-xs text-muted">
             <span>{t("status.lastHour")}</span>
             <span>
               {t("status.timeGame", {
@@ -323,12 +324,10 @@ export function StatusView({
         </div>
 
         {/* Active Processes card */}
-        <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-2">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              {t("status.activeProcesses")}
-            </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
+        <div className="card overflow-hidden anim-fade-up stagger-2">
+          <div className="flex items-center justify-between px-4 pt-4 pb-2.5">
+            <span className="font-semibold">{t("status.activeProcesses")}</span>
+            <span className="text-xs text-muted">
               {t("status.runningOf", {
                 running: runningProcesses.length,
                 total: watchedProcesses.length,
@@ -336,11 +335,11 @@ export function StatusView({
             </span>
           </div>
           {watchedProcesses.length === 0 ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500 italic">
+            <p className="text-xs text-muted italic px-4 pb-4">
               {t("status.noProcesses")}
             </p>
           ) : (
-            <div className="space-y-2">
+            <>
               {watchedProcesses.slice(0, 5).map((wp) => {
                 const key = wpKey(wp);
                 const name = wpName(wp);
@@ -350,178 +349,177 @@ export function StatusView({
                 const icon = processIcons[iconKey] ?? null;
                 const isRunning = runningProcesses.some((r) => r === key);
                 return (
-                  <div key={key} className="flex items-center gap-2.5">
+                  <div
+                    key={key}
+                    className="flex items-center gap-3 px-4 py-2 border-t border-line-subtle"
+                  >
                     <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
+                      className={`w-6.5 h-6.5 rounded-[7px] flex items-center justify-center shrink-0 overflow-hidden text-xs font-semibold ${
                         icon
                           ? "bg-transparent"
                           : isRunning
-                            ? "bg-red-500 shadow-sm shadow-red-500/30"
-                            : "bg-slate-200 dark:bg-slate-700"
+                            ? "bg-accent text-white"
+                            : "bg-chip border border-line-strong text-fg-2"
                       }`}
                     >
                       {icon ? (
                         <img
                           src={icon}
                           alt=""
-                          className="w-7 h-7 object-contain"
+                          className="w-6.5 h-6.5 object-contain"
                         />
                       ) : (
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path
-                            d="M2.5 1.5l4 2.5-4 2.5V1.5z"
-                            fill={isRunning ? "white" : "#94a3b8"}
-                          />
-                        </svg>
+                        name.charAt(0).toUpperCase()
                       )}
                     </div>
-                    <span
-                      className={`text-sm font-mono flex-1 truncate ${
-                        isRunning
-                          ? "text-slate-900 dark:text-slate-100 font-semibold"
-                          : "text-slate-500 dark:text-slate-400"
-                      }`}
-                    >
+                    <span className="text-[12.5px] font-mono flex-1 min-w-0 truncate">
                       {name}
                     </span>
                     <span
-                      className={`text-xs shrink-0 font-medium ${
-                        isRunning
-                          ? "text-slate-600 dark:text-slate-300"
-                          : "text-slate-400 dark:text-slate-500"
+                      className={`flex items-center gap-1.5 text-xs shrink-0 ${
+                        isRunning ? "text-accent-text" : "text-muted"
                       }`}
                     >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          isRunning ? "bg-accent" : "border border-faint"
+                        }`}
+                      />
                       {isRunning ? t("status.running") : t("status.waiting")}
                     </span>
                   </div>
                 );
               })}
               {watchedProcesses.length > 5 && (
-                <p className="text-xs text-slate-400 dark:text-slate-500 pl-9">
+                <p className="text-xs text-muted px-4 py-2 border-t border-line-subtle">
                   {t("status.moreProcesses", {
                     count: watchedProcesses.length - 5,
                   })}
                 </p>
               )}
-            </div>
+            </>
           )}
         </div>
       </div>
 
       {/* Today stats */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] px-5 py-4 flex items-center gap-8 anim-fade-up stagger-3">
+      <div className="card px-5 py-4 flex items-center flex-wrap gap-10 anim-fade-up stagger-3">
         <div>
-          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">
+          <div className="text-[22px] font-semibold tabular-nums">
             {todaySwitches}
           </div>
-          <div className="text-xs text-slate-400 dark:text-slate-500 whitespace-pre-line">
+          <div className="text-xs text-muted mt-0.5 whitespace-pre-line">
             {t("status.switchedAuto")}
           </div>
         </div>
         <div>
-          <div className="text-2xl font-black text-red-500">
+          <div className="text-[22px] font-semibold tabular-nums text-accent-text">
             {formatDuration(gameMinutes)}
           </div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">
+          <div className="text-xs text-muted mt-0.5">
             {t("status.inGameMode")}
           </div>
         </div>
         <div>
-          <div className="text-2xl font-black text-slate-900 dark:text-slate-100">
+          <div className="text-[22px] font-semibold tabular-nums">
             {formatDuration(standardMinutes)}
           </div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">
+          <div className="text-xs text-muted mt-0.5">
             {t("status.inStandard")}
           </div>
         </div>
-        <div className="ml-auto text-xs text-slate-400 dark:text-slate-500">
-          {t("status.today")}
-        </div>
+        <div className="ml-auto text-xs text-muted">{t("status.today")}</div>
       </div>
 
       {/* Event log */}
-      <div className="rounded-2xl border border-black/8 dark:border-white/8 bg-slate-50 dark:bg-[#242424] p-5 anim-fade-up stagger-4">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            {t("status.eventLog")}
-          </span>
-          <div className="flex gap-1">
-            {(
-              [
-                { id: "all", label: t("status.filterAll") },
-                { id: "hz", label: t("status.filterHz") },
-                { id: "process", label: t("status.filterProcess") },
-              ] as const
-            ).map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => setLogFilter(id)}
-                className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${
-                  logFilter === id
-                    ? "bg-red-500 text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/5"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+      <div className="card overflow-hidden anim-fade-up stagger-4">
+        <div className="flex items-center justify-between flex-wrap gap-3 px-4 py-3">
+          <span className="font-semibold">{t("status.eventLog")}</span>
+          <SegmentedControl
+            options={[
+              { value: "all", label: t("status.filterAll") },
+              { value: "hz", label: t("status.filterHz") },
+              { value: "process", label: t("status.filterProcess") },
+            ]}
+            value={logFilter}
+            onChange={(v) => setLogFilter(v as typeof logFilter)}
+          />
         </div>
-        <div className="space-y-3 min-h-20">
-          {filteredLog.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500 italic">
-              {t("status.noEvents")}
-            </p>
-          ) : (
-            filteredLog.map((entry, i) => (
+        {filteredLog.length === 0 ? (
+          <p
+            key={logFilter}
+            className="text-muted italic px-4 py-3 border-t border-line-subtle log-entry"
+          >
+            {t("status.noEvents")}
+          </p>
+        ) : (
+          filteredLog.map((entry, i) => {
+            // Backend reasons lead with the process name; that part reads as code.
+            const verb =
+              entry.process_name &&
+              entry.message.startsWith(entry.process_name)
+                ? entry.message.slice(entry.process_name.length)
+                : null;
+            return (
               <div
                 key={entry.id}
-                className="flex items-center gap-3 text-sm log-entry"
+                className="flex items-center gap-3.5 px-4 py-2.5 border-t border-line-subtle log-entry"
                 style={{ animationDelay: `${Math.min(i, 4) * 30}ms` }}
               >
-                <span className="text-slate-400 dark:text-slate-500 text-xs font-mono w-10 shrink-0 tabular-nums">
+                <span className="text-muted text-xs font-mono w-10 shrink-0 tabular-nums">
                   {entry.timestamp}
                 </span>
                 <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     entry.event_type === "process_start"
-                      ? "bg-red-500 dot-pulse"
-                      : "bg-slate-400 dark:bg-slate-500"
+                      ? "bg-accent"
+                      : "bg-dot"
                   }`}
                 />
-                <span className="flex-1 text-slate-700 dark:text-slate-300 truncate">
-                  {entry.message}
+                <span className="flex-1 min-w-0 truncate">
+                  {verb === null ? (
+                    entry.message
+                  ) : (
+                    <>
+                      <span className="font-mono text-[12.5px]">
+                        {entry.process_name}
+                      </span>
+                      <span className="text-muted">{verb}</span>
+                    </>
+                  )}
                 </span>
                 {multiMonitorLog && entry.monitor && (
                   <span
-                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md shrink-0 bg-chip border border-line-strong text-fg-3"
                     title={entry.monitor}
                   >
                     {t("status.monitorTag", { n: deviceTag(entry.monitor) })}
                   </span>
                 )}
                 {entry.hz_from != null && entry.hz_to != null && (
-                  <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 tabular-nums font-mono">
+                  <span className="text-xs text-fg-3 shrink-0 tabular-nums font-mono">
                     {entry.hz_from} → {entry.hz_to} Hz
                   </span>
                 )}
-                {entry.event_type !== "system" && (
+                {entry.event_type !== "system" ? (
                   <span
-                    className={`text-xs font-bold px-2.5 py-0.5 rounded-full shrink-0 ${
+                    className={`w-18 text-center text-[11px] font-semibold py-0.5 rounded-full border shrink-0 ${
                       entry.event_type === "process_start"
-                        ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400"
-                        : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                        ? "bg-accent-soft border-accent-line text-accent-text"
+                        : "bg-chip border-line-strong text-fg-3"
                     }`}
                   >
                     {entry.event_type === "process_stop"
                       ? t("status.badgeStandby")
                       : t("status.badgeGame")}
                   </span>
+                ) : (
+                  <span className="w-18 shrink-0" />
                 )}
               </div>
-            ))
-          )}
-        </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -571,7 +569,7 @@ function Sparkline({
   }
 
   const areaD = `${d} L ${W} ${H} L 0 ${H} Z`;
-  const color = mode === "GAME" ? "#ef4444" : "#94a3b8";
+  const color = mode === "GAME" ? "var(--accent)" : "var(--faint)";
 
   return (
     <svg
@@ -582,12 +580,19 @@ function Sparkline({
     >
       <defs>
         <linearGradient id="hzGradFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+          <stop offset="0%" style={{ stopColor: color, stopOpacity: 0.25 }} />
+          <stop offset="100%" style={{ stopColor: color, stopOpacity: 0.02 }} />
         </linearGradient>
       </defs>
       <path d={areaD} fill="url(#hzGradFill)" />
-      <path d={d} fill="none" stroke={color} strokeWidth="2" />
+      <path
+        d={d}
+        fill="none"
+        className="sparkline-path"
+        style={{ stroke: color }}
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
