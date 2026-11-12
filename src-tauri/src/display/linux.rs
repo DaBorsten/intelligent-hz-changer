@@ -179,6 +179,12 @@ mod gnome {
         Vec<MonitorSpec>,
         HashMap<String, OwnedValue>,
     );
+    /// One monitor of a logical monitor as `ApplyMonitorsConfig` takes it:
+    /// connector, mode id, properties.
+    type MonitorConfig = (String, String, HashMap<String, OwnedValue>);
+    /// One logical monitor as `ApplyMonitorsConfig` takes it: x, y, scale,
+    /// transform, primary, monitors.
+    type LogicalMonitorConfig = (i32, i32, f64, u32, bool, Vec<MonitorConfig>);
     type CurrentState = (
         u32, // serial
         Vec<MonitorEntry>,
@@ -358,7 +364,7 @@ mod gnome {
             .map(|(id, ..)| id.clone())
             .ok_or_else(|| format!("{hz} Hz not supported at {w}x{h} on '{monitor_name}'"))?;
 
-        let logical_config: Vec<(i32, i32, f64, u32, bool, Vec<(String, String, HashMap<String, OwnedValue>)>)> =
+        let logical_config: Vec<LogicalMonitorConfig> =
             logical_monitors
                 .into_iter()
                 .map(|(x, y, scale, transform, is_primary, mons, _)| {
@@ -805,6 +811,84 @@ mod xrandr {
             Ok(())
         } else {
             Err(format!("xrandr exited with status {status}"))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const SAMPLE: &str = "\
+Screen 0: minimum 320 x 200, current 4480 x 1440, maximum 16384 x 16384
+DP-1 connected primary 2560x1440+0+0 (normal left inverted right x axis y axis) 597mm x 336mm
+   2560x1440    143.97*+  119.88    59.95
+   1920x1080    144.00   60.00
+HDMI-1 connected 1920x1080+2560+0 (normal left inverted right x axis y axis) 527mm x 296mm
+   1920x1080     60.00*+  50.00    74.97
+   1280x720      60.00
+DP-2 disconnected (normal left inverted right x axis y axis)
+DP-3 connected (normal left inverted right x axis y axis)
+   1920x1080     60.00 +
+";
+
+        #[test]
+        fn parse_geometry_reads_size_and_offset() {
+            assert_eq!(parse_geometry("2560x1440+0+0"), Some((2560, 1440, 0, 0)));
+            assert_eq!(parse_geometry("1920x1080+2560+360"), Some((1920, 1080, 2560, 360)));
+            assert_eq!(parse_geometry("1920x1080"), None);
+            assert_eq!(parse_geometry("1920x1080+1"), None);
+            assert_eq!(parse_geometry("axb+0+0"), None);
+        }
+
+        #[test]
+        fn parse_query_reads_outputs_and_flags() {
+            let outs = parse_query(SAMPLE);
+            let names: Vec<&str> = outs.iter().map(|o| o.name.as_str()).collect();
+            assert_eq!(names, ["DP-1", "HDMI-1", "DP-2", "DP-3"]);
+
+            let dp1 = &outs[0];
+            assert!(dp1.connected && dp1.primary && dp1.has_geometry);
+            assert_eq!((dp1.width, dp1.height, dp1.x, dp1.y), (2560, 1440, 0, 0));
+
+            let hdmi = &outs[1];
+            assert!(hdmi.connected && !hdmi.primary);
+            assert_eq!((hdmi.x, hdmi.y), (2560, 0));
+
+            assert!(!outs[2].connected);
+            assert!(outs[2].modes.is_empty());
+
+            // Connected but switched off: no geometry, so it is filtered out later.
+            assert!(outs[3].connected && !outs[3].has_geometry);
+            assert_eq!(outs[3].modes.len(), 1);
+        }
+
+        #[test]
+        fn parse_query_reads_modes_and_the_current_one() {
+            let outs = parse_query(SAMPLE);
+            let dp1 = &outs[0];
+            let rates: Vec<(u32, u32, f64, bool)> =
+                dp1.modes.iter().map(|m| (m.width, m.height, m.rate, m.current)).collect();
+            assert_eq!(
+                rates,
+                vec![
+                    (2560, 1440, 143.97, true),
+                    (2560, 1440, 119.88, false),
+                    (2560, 1440, 59.95, false),
+                    (1920, 1080, 144.00, false),
+                    (1920, 1080, 60.00, false),
+                ]
+            );
+            assert_eq!(outs[1].modes.iter().filter(|m| m.current).count(), 1);
+            // A detached "+" (preferred marker) is not a rate.
+            assert_eq!(outs[3].modes.len(), 1);
+            assert!(!outs[3].modes[0].current);
+        }
+
+        #[test]
+        fn parse_query_tolerates_empty_and_unknown_lines() {
+            assert!(parse_query("").is_empty());
+            let outs = parse_query("Screen 0: foo\nVIRTUAL1 unknown connection\n   garbage line\n");
+            assert!(outs.is_empty());
         }
     }
 }

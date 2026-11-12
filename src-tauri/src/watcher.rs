@@ -1,5 +1,7 @@
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
@@ -50,223 +52,165 @@ pub fn hz_log() -> Vec<serde_json::Value> {
 
 pub fn start(state: Arc<WatchState>, app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         run_start_watcher(state, app_handle);
-        #[cfg(target_os = "linux")]
-        run_start_watcher_linux(state, app_handle);
         #[cfg(not(any(windows, target_os = "linux")))]
         let _ = (state, app_handle);
     });
 }
 
-#[cfg(windows)]
-use serde::Deserialize;
+/// Serializes everything that derives start/stop edges from a process
+/// snapshot: the periodic scan, the on-demand `reconcile`, and the exit
+/// handler. Without it, a scan working from a snapshot taken a moment earlier
+/// could retire a process `reconcile` has just registered, or re-register one
+/// whose exit is being handled right now.
+#[cfg(any(windows, target_os = "linux"))]
+static SCAN_LOCK: Mutex<()> = Mutex::new(());
 
-/// A Win32_Process row (also the `TargetInstance` of a creation event).
+/// Milliseconds between two scans for newly started watched processes. A user
+/// setting; read before every sleep, so a change applies from the next scan on.
+static SCAN_INTERVAL_MS: AtomicU32 =
+    AtomicU32::new(crate::settings::default_scan_interval_ms(false));
+
+/// Whether the Windows scan reads the process list through the fast kernel
+/// query instead of a Toolhelp snapshot. A user setting.
 #[cfg(windows)]
-#[derive(Deserialize)]
-#[serde(rename = "Win32_Process")]
-struct ProcessEntry {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "ProcessId")]
-    process_id: u32,
-    #[serde(rename = "ExecutablePath")]
-    executable_path: Option<String>,
+static FAST_DETECTION: AtomicBool = AtomicBool::new(false);
+
+/// Applies the watcher-related user settings to the running watcher.
+pub fn apply_settings(settings: &crate::settings::AppSettings) {
+    let fast_available = crate::process_watcher::fast_detection_available();
+    SCAN_INTERVAL_MS.store(settings.scan_interval_ms(fast_available), Ordering::Relaxed);
+    #[cfg(windows)]
+    FAST_DETECTION.store(settings.fast_detection(fast_available), Ordering::Relaxed);
 }
 
-/// `__InstanceCreationEvent` carrying the newly created `Win32_Process`.
-#[cfg(windows)]
-#[derive(Deserialize)]
-#[serde(rename = "__InstanceCreationEvent")]
-struct NewProcessEvent {
-    #[serde(rename = "TargetInstance")]
-    target_instance: ProcessEntry,
+#[cfg(any(windows, target_os = "linux"))]
+fn scan_interval() -> Duration {
+    let ms = SCAN_INTERVAL_MS.load(Ordering::Relaxed);
+    // The fast query can still fail after it was configured, which leaves the
+    // scan on Toolhelp — too costly for a sub-second interval.
+    #[cfg(windows)]
+    let ms = if crate::process_watcher::fast_detection_available() {
+        ms
+    } else {
+        ms.max(1000)
+    };
+    Duration::from_millis(ms as u64)
 }
 
-/// Event-driven start detection — no admin required.
+/// Start detection — no admin/root required.
 ///
-/// Subscribes to WMI `__InstanceCreationEvent` for `Win32_Process` instead of
-/// enumerating every process on a timer: our thread blocks until a process is
-/// actually created and only receives the new instance. (WMI still polls at the
-/// `WITHIN` interval internally — truly poll-free start detection needs the ETW
-/// kernel provider, which requires admin.) Falls back to timer polling if the
-/// subscription can't be established (e.g. locked-down WMI).
-#[cfg(windows)]
+/// Neither Windows nor Linux has a process-creation event for unprivileged
+/// callers (ETW and `Win32_ProcessStartTrace` need admin, the netlink proc
+/// connector needs root), so this scans the process list at the configured
+/// interval. See the per-platform `scan_once` for how each keeps a pass cheap.
+#[cfg(any(windows, target_os = "linux"))]
 fn run_start_watcher(state: Arc<WatchState>, app: tauri::AppHandle) {
-    use wmi::{COMLibrary, WMIConnection};
-
-    let com_lib = match COMLibrary::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("WMI COM init failed: {e}");
-            return;
-        }
-    };
-    let wmi_con = match WMIConnection::new(com_lib) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("WMI connect failed: {e}");
-            return;
-        }
-    };
-
-    if let Err(e) = run_event_loop(&wmi_con, &state, &app) {
-        eprintln!("WMI event subscription failed ({e}); falling back to polling");
-        run_poll_loop(&wmi_con, &state, &app);
-    }
-}
-
-/// Blocks on the creation-event stream forever. Returns `Err` only if the
-/// subscription itself can't be set up, so the caller can fall back to polling.
-#[cfg(windows)]
-fn run_event_loop(
-    wmi_con: &wmi::WMIConnection,
-    state: &Arc<WatchState>,
-    app: &tauri::AppHandle,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::HashMap;
-    use wmi::FilterValue;
-
-    let mut filters = HashMap::new();
-    filters.insert("TargetInstance".to_owned(), FilterValue::is_a::<ProcessEntry>()?);
-
-    // Activating the subscription before the initial scan means any process that
-    // starts during the scan is queued and handled right after (dedup prevents
-    // double handling).
-    // WITHIN interval: WmiPrvSE re-enumerates all processes this often for as
-    // long as the app runs. 2s halves that background cost versus 1s, and a
-    // game takes far longer than that to show its first frame anyway.
-    let iterator =
-        wmi_con.filtered_notification::<NewProcessEvent>(&filters, Some(Duration::from_secs(2)))?;
-
-    // Events only fire for processes started *after* subscribing — catch those
-    // already running now.
-    reconcile(state, app);
-
-    for event in iterator {
-        match event {
-            Ok(ev) => {
-                // Almost every process start is irrelevant; drop it before the
-                // OpenProcess round-trip an exe-path lookup would cost.
-                if !is_watched_name(state, &ev.target_instance.name) {
-                    continue;
-                }
-                let pid = ev.target_instance.process_id;
-                let exe = ev.target_instance.executable_path
-                    .filter(|p| !p.is_empty())
-                    .or_else(|| crate::process_watcher::exe_path_from_pid(pid))
-                    .unwrap_or_default();
-                register_process(state, app, &ev.target_instance.name, &exe, pid);
-            }
-            Err(e) => eprintln!("WMI notification error: {e}"),
-        }
-    }
-    Ok(())
-}
-
-/// True if some watch entry carries this process name. A name match is
-/// necessary for any entry to match, so failing it rules the process out
-/// without resolving its executable path.
-#[cfg(windows)]
-fn is_watched_name(state: &WatchState, name: &str) -> bool {
-    use crate::process_watcher::WatchedProcess;
-    let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-    cfg.watched_processes.iter().any(|w| match w {
-        WatchedProcess::Name(n) | WatchedProcess::WithPath { name: n, .. } => {
-            n.eq_ignore_ascii_case(name)
-        }
-    })
-}
-
-/// Timer fallback used only when the event subscription is unavailable.
-#[cfg(windows)]
-fn run_poll_loop(wmi_con: &wmi::WMIConnection, state: &Arc<WatchState>, app: &tauri::AppHandle) {
     loop {
-        let processes: Vec<ProcessEntry> = match wmi_con.query() {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("WMI query error: {e}");
-                std::thread::sleep(Duration::from_secs(2));
-                continue;
-            }
-        };
-
-        let current_pids: HashSet<u32> = processes.iter().map(|p| p.process_id).collect();
-        // Drop dead PIDs so a watch_exit thread is re-armed on restart.
-        state
-            .watching
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|pid| current_pids.contains(pid));
-
-        // Retire watched PIDs that vanished. watch_exit normally owns this edge,
-        // but it can't observe a process it never got a handle for (exited too
-        // fast, or OpenProcess denied), which would otherwise pin `running`
-        // non-empty forever and strand the monitor at game Hz.
-        let dead: Vec<u32> = state.running_pids().into_iter()
-            .filter(|pid| !current_pids.contains(pid))
-            .collect();
-        for pid in dead {
-            if state.on_process_stop(pid) && state.is_enabled() {
-                sync_hz(state, app, "Prozess beendet".into(), None, "process_stop");
-            }
-        }
-
-        let watched: Vec<crate::process_watcher::WatchedProcess> = {
-            let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-            cfg.watched_processes.clone()
-        };
-        for proc in &processes {
-            if !is_watched_name(state, &proc.name) {
-                continue;
-            }
-            let exe = proc.executable_path.clone()
-                .filter(|p| !p.is_empty())
-                .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
-                .unwrap_or_default();
-            if watched.iter().any(|w| w.matches(&proc.name, &exe)) {
-                register_process(state, app, &proc.name, &exe, proc.process_id);
-            }
-        }
-
-        std::thread::sleep(Duration::from_secs(2));
+        scan_once(&state, &app);
+        std::thread::sleep(scan_interval());
     }
 }
 
-/// Enumerates running processes once and registers every watched one. Used for
-/// the initial scan and after a config change (a process may already be running
-/// when it is added to the watch list — no creation event will ever fire for it).
+/// One pass over the process list: retires watched PIDs that are gone and
+/// registers watched processes that aren't tracked yet.
+///
+/// Done without WMI: the kernel hands back just PID and image name per
+/// process, instead of WmiPrvSE building a full `Win32_Process` object for
+/// every process on each tick. Which API reads the list is the user's choice —
+/// see `for_each_process_with`.
 #[cfg(windows)]
-pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
-    use wmi::{COMLibrary, WMIConnection};
+fn scan_once(state: &Arc<WatchState>, app: &tauri::AppHandle) {
+    use crate::process_watcher::{
+        exe_path_from_pid, for_each_process_with, wide_eq_ignore_ascii_case,
+    };
 
-    // Own short-lived connection so we never enumerate on the notification
-    // connection. spawn_blocking/command threads may already be COM-initialized.
-    let com = COMLibrary::new().unwrap_or_else(|_| unsafe { COMLibrary::assume_initialized() });
-    let Ok(con) = WMIConnection::new(com) else {
-        return;
-    };
-    let Ok(processes): Result<Vec<ProcessEntry>, _> = con.query() else {
-        return;
-    };
+    let _scan = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let watched: Vec<crate::process_watcher::WatchedProcess> = {
         let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
         cfg.watched_processes.clone()
     };
-    for proc in &processes {
-        if !is_watched_name(state, &proc.name) {
-            continue;
+
+    // Almost every process is irrelevant: names are compared as the raw UTF-16
+    // the snapshot holds, so only a name match costs an allocation (and, below,
+    // the OpenProcess round-trip an exe-path lookup takes).
+    let mut current_pids: HashSet<u32> = HashSet::with_capacity(512);
+    let mut candidates: Vec<(u32, String)> = Vec::new();
+    let fast = FAST_DETECTION.load(Ordering::Relaxed);
+    let complete = for_each_process_with(fast, |pid, name| {
+        current_pids.insert(pid);
+        if watched.iter().any(|w| wide_eq_ignore_ascii_case(name, w.name())) {
+            candidates.push((pid, String::from_utf16_lossy(name)));
         }
-        let exe = proc.executable_path.clone()
-            .filter(|p| !p.is_empty())
-            .or_else(|| crate::process_watcher::exe_path_from_pid(proc.process_id))
-            .unwrap_or_default();
-        if watched.iter().any(|w| w.matches(&proc.name, &exe)) {
-            register_process(state, app, &proc.name, &exe, proc.process_id);
+    });
+    // A failed snapshot says nothing about what is running; acting on it would
+    // retire every watched process.
+    if !complete {
+        return;
+    }
+
+    // Drop dead PIDs so a restart under a reused PID is registered afresh.
+    state
+        .watching
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|pid| current_pids.contains(pid));
+
+    // Retire watched PIDs that vanished. watch_exit normally owns this edge,
+    // but it can't observe a process it never got a handle for (exited too
+    // fast, or OpenProcess denied), which would otherwise pin `running`
+    // non-empty forever and strand the monitor at game Hz.
+    let dead: Vec<u32> = state
+        .running_pids()
+        .into_iter()
+        .filter(|pid| !current_pids.contains(pid))
+        .collect();
+    for pid in dead {
+        if state.on_process_stop(pid) && state.is_enabled() {
+            sync_hz(state, app, "Prozess beendet".into(), None, "process_stop");
         }
     }
+
+    let tracked: HashSet<u32> = state.running_pids().into_iter().collect();
+    for (pid, name) in candidates {
+        // A process can still be listed for a moment after it has terminated.
+        // Registering it then would raise the Hz for something that is gone.
+        if !tracked.contains(&pid) && has_exited(pid) {
+            continue;
+        }
+        let exe = exe_path_from_pid(pid).unwrap_or_default();
+        if watched.iter().any(|w| w.matches(&name, &exe)) {
+            // Idempotent for a PID that is already tracked, and it picks up an
+            // entry that was disabled when the process was first seen.
+            register_process(state, app, &name, &exe, pid);
+        }
+    }
+}
+
+/// True if the process has terminated. False if that can't be told (no handle).
+#[cfg(windows)]
+fn has_exited(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+            return false;
+        };
+        let exited = WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+        let _ = CloseHandle(handle);
+        exited
+    }
+}
+
+/// Scans the running processes once, outside the regular interval. Used after
+/// a config change: a process may already be running when it is added to the
+/// watch list, and the Hz should follow right away rather than a tick later.
+#[cfg(any(windows, target_os = "linux"))]
+pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
+    scan_once(state, app);
 }
 
 /// One running process, as read from `/proc`.
@@ -277,10 +221,9 @@ pub struct ProcInfo {
     pub exe_path: String,
 }
 
-/// Linux has no process-creation event API available without admin/root
-/// (netlink proc connector) or a kernel new enough to guarantee pidfd-based
-/// polling, so this scans `/proc` directly — the same tradeoff the Windows
-/// WMI poll fallback already makes.
+/// Every process with its name and executable path, for the process picker.
+/// The watcher itself doesn't use this: resolving every executable path is the
+/// expensive part, and `scan_once` only does it for watch-list candidates.
 #[cfg(target_os = "linux")]
 pub fn list_processes_linux() -> Vec<ProcInfo> {
     let mut result = Vec::new();
@@ -291,10 +234,7 @@ pub fn list_processes_linux() -> Vec<ProcInfo> {
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
         };
-        let exe_path = std::fs::read_link(format!("/proc/{pid}/exe"))
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let exe_path = exe_path_linux(pid);
         let name = linux_process_name(pid, &exe_path);
         if name.is_empty() {
             continue;
@@ -304,6 +244,36 @@ pub fn list_processes_linux() -> Vec<ProcInfo> {
     result
 }
 
+/// The kernel truncates `/proc/<pid>/comm` to this many bytes.
+#[cfg(target_os = "linux")]
+const COMM_MAX: usize = 15;
+
+/// Target of the `/proc/<pid>/exe` symlink; empty if it can't be read (kernel
+/// threads, other users' processes, or the process is already gone).
+#[cfg(target_os = "linux")]
+fn exe_path_linux(pid: u32) -> String {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Reads `/proc/<pid>/comm` into `buf`, reusing `path` for the file name so a
+/// pass over every process allocates nothing. `None` if the process is gone or
+/// its name isn't valid UTF-8.
+#[cfg(target_os = "linux")]
+fn read_comm<'a>(pid: u32, path: &mut String, buf: &'a mut [u8; 64]) -> Option<&'a str> {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    path.clear();
+    let _ = write!(path, "/proc/{pid}/comm");
+    let len = std::fs::File::open(path.as_str()).ok()?.read(buf).ok()?;
+    std::str::from_utf8(&buf[..len]).ok().map(str::trim)
+}
+
+/// The name a process is matched by.
+///
 /// `/proc/<pid>/comm` mirrors what `ps`/`top` show, and — notably — is what
 /// the kernel sets for shebang-launched scripts (the script's own basename,
 /// not the interpreter). The `/proc/<pid>/exe` symlink target would instead
@@ -319,76 +289,134 @@ pub fn list_processes_linux() -> Vec<ProcInfo> {
 /// interpreter/loader, whose basename does not extend `comm`, so the check
 /// simply doesn't fire.
 #[cfg(target_os = "linux")]
-fn linux_process_name(pid: u32, exe_path: &str) -> String {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    if comm.len() == 15 {
+fn untruncated_name(comm: &str, exe_path: &str) -> String {
+    if comm.len() == COMM_MAX {
         if let Some(base) = std::path::Path::new(exe_path)
             .file_name()
             .map(|b| b.to_string_lossy().into_owned())
         {
-            if base.len() > comm.len() && base.starts_with(&comm) {
+            if base.len() > comm.len() && base.starts_with(comm) {
                 return base;
             }
         }
     }
-    comm
+    comm.to_string()
 }
 
+/// `untruncated_name` of a running process; empty if it has no readable name.
 #[cfg(target_os = "linux")]
-pub fn reconcile(state: &Arc<WatchState>, app: &tauri::AppHandle) {
+fn linux_process_name(pid: u32, exe_path: &str) -> String {
+    let (mut path, mut buf) = (String::new(), [0u8; 64]);
+    read_comm(pid, &mut path, &mut buf)
+        .map(|comm| untruncated_name(comm, exe_path))
+        .unwrap_or_default()
+}
+
+/// Whether a process whose `comm` is `comm` could be the one `watched` names:
+/// the names are equal, or `comm` is the truncated start of a longer watched
+/// name. Never false for a process `untruncated_name` would make match, so it
+/// can rule a process out before its executable path is resolved.
+#[cfg(target_os = "linux")]
+fn comm_may_match(comm: &str, watched: &str) -> bool {
+    comm.eq_ignore_ascii_case(watched)
+        || (comm.len() == COMM_MAX
+            && watched.len() > COMM_MAX
+            && watched.as_bytes()[..COMM_MAX].eq_ignore_ascii_case(comm.as_bytes()))
+}
+
+/// True if the process has exited but its parent hasn't reaped it yet. Such a
+/// zombie keeps its `/proc` entry and its name — for as long as a sloppy
+/// launcher leaves it there — but it is no longer running.
+#[cfg(target_os = "linux")]
+fn is_zombie(pid: u32) -> bool {
+    // `pid (comm) state ...`; comm may itself contain parentheses.
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            let (_, rest) = stat.rsplit_once(')')?;
+            Some(rest.trim_start().starts_with('Z'))
+        })
+        .unwrap_or(false)
+}
+
+/// Reads `/proc` once: the PIDs of all processes, and the processes matching
+/// the watch list that aren't in `skip`. `None` if `/proc` can't be read.
+///
+/// Every process's `comm` is read on every pass, even for PIDs seen before:
+/// a process changes its name when it `exec`s (a launcher script turning into
+/// the game keeps its PID), so remembering a PID as "not watched" would miss
+/// it. What is saved is the `exe` symlink lookup, which only candidates get.
+#[cfg(target_os = "linux")]
+fn scan_proc(
+    watched: &[crate::process_watcher::WatchedProcess],
+    skip: &HashSet<u32>,
+) -> Option<(HashSet<u32>, Vec<ProcInfo>)> {
+    let entries = std::fs::read_dir("/proc").ok()?;
+    let mut pids: HashSet<u32> = HashSet::with_capacity(512);
+    let mut matches = Vec::new();
+    let (mut path, mut buf) = (String::with_capacity(32), [0u8; 64]);
+
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        pids.insert(pid);
+        if skip.contains(&pid) {
+            continue;
+        }
+        let Some(comm) = read_comm(pid, &mut path, &mut buf) else {
+            continue;
+        };
+        if !watched.iter().any(|w| comm_may_match(comm, w.name())) || is_zombie(pid) {
+            continue;
+        }
+        let exe_path = exe_path_linux(pid);
+        let name = untruncated_name(comm, &exe_path);
+        if watched.iter().any(|w| w.matches(&name, &exe_path)) {
+            matches.push(ProcInfo { pid, name, exe_path });
+        }
+    }
+    Some((pids, matches))
+}
+
+/// One pass over `/proc`: retires watched PIDs that are gone and registers
+/// watched processes that aren't tracked yet.
+#[cfg(target_os = "linux")]
+fn scan_once(state: &Arc<WatchState>, app: &tauri::AppHandle) {
+    let _scan = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let watched: Vec<crate::process_watcher::WatchedProcess> = {
         let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
         cfg.watched_processes.clone()
     };
-    for proc in &list_processes_linux() {
-        if watched.iter().any(|w| w.matches(&proc.name, &proc.exe_path)) {
-            register_process(state, app, &proc.name, &proc.exe_path, proc.pid);
+    // Processes already counted as running need no second look.
+    let tracked: HashSet<u32> = state.running_pids().into_iter().collect();
+    // An unreadable /proc says nothing about what is running; acting on it
+    // would retire every watched process.
+    let Some((current_pids, matches)) = scan_proc(&watched, &tracked) else {
+        return;
+    };
+
+    // Drop dead PIDs so a restart under a reused PID is registered afresh.
+    state
+        .watching
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|pid| current_pids.contains(pid));
+
+    // Retire watched PIDs that vanished. watch_exit normally owns this edge,
+    // but it can't observe a process it couldn't get a pidfd for (kernel older
+    // than 5.3, or the process exited first), which would otherwise pin
+    // `running` non-empty forever and strand the monitor at game Hz.
+    for pid in tracked {
+        let gone = !current_pids.contains(&pid) || is_zombie(pid);
+        if gone && state.on_process_stop(pid) && state.is_enabled() {
+            sync_hz(state, app, "Prozess beendet".into(), None, "process_stop");
         }
     }
-}
 
-/// Polls `/proc` every 2s: registers newly-matched watched processes and
-/// retires PIDs that vanished (mirrors `run_poll_loop`'s dead-PID handling —
-/// `watch_exit` normally owns that edge but can't observe a process it never
-/// got a handle for).
-#[cfg(target_os = "linux")]
-fn run_start_watcher_linux(state: Arc<WatchState>, app: tauri::AppHandle) {
-    loop {
-        let processes = list_processes_linux();
-        let current_pids: HashSet<u32> = processes.iter().map(|p| p.pid).collect();
-
-        state
-            .watching
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|pid| current_pids.contains(pid));
-
-        let dead: Vec<u32> = state
-            .running_pids()
-            .into_iter()
-            .filter(|pid| !current_pids.contains(pid))
-            .collect();
-        for pid in dead {
-            if state.on_process_stop(pid) && state.is_enabled() {
-                sync_hz(&state, &app, "Prozess beendet".into(), None, "process_stop");
-            }
-        }
-
-        let watched: Vec<crate::process_watcher::WatchedProcess> = {
-            let cfg = state.config.lock().unwrap_or_else(|e| e.into_inner());
-            cfg.watched_processes.clone()
-        };
-        for proc in &processes {
-            if watched.iter().any(|w| w.matches(&proc.name, &proc.exe_path)) {
-                register_process(&state, &app, &proc.name, &proc.exe_path, proc.pid);
-            }
-        }
-
-        std::thread::sleep(Duration::from_secs(2));
+    for proc in &matches {
+        register_process(state, app, &proc.name, &proc.exe_path, proc.pid);
     }
 }
 
@@ -543,6 +571,10 @@ pub fn apply_targets(
 /// empty-set edge if this was the last running instance.
 #[cfg(any(windows, target_os = "linux"))]
 fn on_watched_process_exited(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
+    // Not while a scan is mid-pass: its snapshot may still list this PID, and
+    // it would register the process again right after we retire it.
+    let _scan = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     state
         .watching
         .lock()
@@ -571,31 +603,222 @@ fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHan
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
-    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
-        Ok(handle) => {
-            unsafe { WaitForSingleObject(handle, u32::MAX) }; // INFINITE
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
-        }
-        Err(_) => {
-            // Process already terminated before we could open it.
-        }
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }) else {
+        // Either the process is already gone or it refuses the handle. Those
+        // can't be told apart here, and reporting an exit for a process that
+        // is still running would drop the Hz under a running game — so leave
+        // the PID tracked; the next scan retires it once it has really gone.
+        crate::logging::log(&format!(
+            "watch_exit: no handle for '{name}' pid={pid}; the scan will detect its exit"
+        ));
+        return;
+    };
+    unsafe {
+        WaitForSingleObject(handle, u32::MAX); // INFINITE
+        let _ = CloseHandle(handle);
     }
 
     on_watched_process_exited(pid, name, state, app);
 }
 
-/// Blocks until the process exits by polling for `/proc/<pid>` to disappear.
-/// Linux has no portable "wait for an arbitrary PID" primitive without pidfd
-/// (kernel 5.3+/glibc 2.36+, not guaranteed on every distro) or the root-only
-/// netlink proc connector, so this mirrors the WMI poll-loop fallback already
-/// used on Windows. A 1s interval is negligible for a handful of watched PIDs.
+/// Blocks until the process exits, on a pidfd — a kernel event, zero CPU
+/// overhead, and no root needed.
 #[cfg(target_os = "linux")]
 fn watch_exit(pid: u32, name: String, state: Arc<WatchState>, app: tauri::AppHandle) {
-    while std::path::Path::new(&format!("/proc/{pid}")).exists() {
-        std::thread::sleep(Duration::from_millis(1000));
+    if !wait_for_exit(pid) {
+        // No pidfd (kernel older than 5.3) or the process is already gone.
+        // Those can't be told apart here, and reporting an exit for a process
+        // that is still running would drop the Hz under a running game — so
+        // leave the PID tracked; the next scan retires it once it has gone.
+        crate::logging::log(&format!(
+            "watch_exit: no pidfd for '{name}' pid={pid}; the scan will detect its exit"
+        ));
+        return;
     }
 
     on_watched_process_exited(pid, name, state, app);
+}
+
+/// Waits for `pid` to exit. False if it can't be waited on at all.
+#[cfg(target_os = "linux")]
+fn wait_for_exit(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // pidfd_open has no glibc wrapper before 2.36; the raw syscall works on
+    // every kernel that has it (5.3+) and fails cleanly with ENOSYS otherwise.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0 as libc::c_uint) } as libc::c_int;
+    if fd < 0 {
+        return false;
+    }
+
+    // A pidfd turns readable when its process terminates.
+    let mut poll_fd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let exited = loop {
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, -1) };
+        if ready > 0 {
+            break true;
+        }
+        if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        break false;
+    };
+    unsafe { libc::close(fd) };
+    exited
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    fn own_exe() -> String {
+        std::env::current_exe().unwrap().to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn own_process_name_is_the_full_binary_name() {
+        // The test binary is `app_lib-<hash>`, longer than the 15-byte `comm`
+        // limit, so this exercises the untruncation path.
+        let exe = own_exe();
+        let base = std::path::Path::new(&exe).file_name().unwrap().to_string_lossy().into_owned();
+        assert!(base.len() > 15, "expected a long test binary name, got {base}");
+        assert_eq!(linux_process_name(std::process::id(), &exe), base);
+    }
+
+    #[test]
+    fn truncated_comm_is_kept_when_exe_does_not_extend_it() {
+        // Script/Wine case: the exe is an interpreter, so `comm` stays.
+        let pid = std::process::id();
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap();
+        assert_eq!(linux_process_name(pid, "/usr/bin/bash"), comm.trim());
+        assert_eq!(linux_process_name(pid, ""), comm.trim());
+    }
+
+    #[test]
+    fn unknown_pids_have_no_name() {
+        assert_eq!(linux_process_name(u32::MAX, "/usr/bin/whatever"), "");
+    }
+
+    fn named(name: &str) -> crate::process_watcher::WatchedProcess {
+        crate::process_watcher::WatchedProcess::Name(name.into())
+    }
+
+    #[test]
+    fn comm_prefilter_never_rules_out_a_real_match() {
+        assert!(comm_may_match("game", "Game"));
+        assert!(!comm_may_match("game", "game2"));
+        // A 15-byte comm may be the truncated start of a longer watched name.
+        assert!(comm_may_match("a-very-long-nam", "A-Very-Long-Name-Indeed"));
+        assert!(!comm_may_match("a-very-long-nam", "a-very-long-nom-indeed"));
+        // A shorter comm is never a truncation.
+        assert!(!comm_may_match("a-very-long", "a-very-long-name-indeed"));
+        // Non-ASCII names must not trip up the byte-wise prefix check.
+        assert!(!comm_may_match("a-very-long-nam", "üüüüüüüüüüüüüüüü"));
+    }
+
+    #[test]
+    fn untruncated_name_only_extends_a_full_length_comm() {
+        assert_eq!(untruncated_name("a-very-long-nam", "/opt/a-very-long-name"), "a-very-long-name");
+        assert_eq!(untruncated_name("a-very-long-nam", "/usr/bin/bash"), "a-very-long-nam");
+        assert_eq!(untruncated_name("short", "/opt/shorter"), "short");
+    }
+
+    #[test]
+    fn scan_finds_this_process_by_its_full_name() {
+        let pid = std::process::id();
+        let exe = own_exe();
+        let base = std::path::Path::new(&exe).file_name().unwrap().to_string_lossy().into_owned();
+
+        let (pids, matches) = scan_proc(&[named(&base)], &HashSet::new()).unwrap();
+        assert!(pids.contains(&pid));
+        let me = matches.iter().find(|p| p.pid == pid).expect("own process not matched");
+        assert_eq!(me.name, base);
+        assert_eq!(me.exe_path, exe);
+
+        // A tracked PID is listed but not matched again.
+        let (pids, matches) = scan_proc(&[named(&base)], &HashSet::from([pid])).unwrap();
+        assert!(pids.contains(&pid));
+        assert!(matches.iter().all(|p| p.pid != pid));
+
+        // Nothing matches a name no process has.
+        let (_, matches) = scan_proc(&[named("no-such-process-xyz")], &HashSet::new()).unwrap();
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn scan_follows_a_process_that_changes_its_name_by_exec() {
+        // A shell that sleeps and then `exec`s keeps its PID but changes name:
+        // the scan must match it under the new name, not the remembered one.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 0.3; exec sleep 5"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let matched = |name: &str| {
+            let (_, m) = scan_proc(&[named(name)], &HashSet::new()).unwrap();
+            m.iter().any(|p| p.pid == pid)
+        };
+
+        let mut seen_as_sh = false;
+        let mut seen_as_sleep = false;
+        for _ in 0..100 {
+            seen_as_sh |= matched("sh");
+            if matched("sleep") {
+                seen_as_sleep = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(seen_as_sh, "never saw the shell before its exec");
+        assert!(seen_as_sleep, "the exec'd process was not matched under its new name");
+    }
+
+    #[test]
+    fn zombies_are_not_matched() {
+        // Exited but not yet waited for: still in /proc under its name.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        let mut zombie = false;
+        for _ in 0..100 {
+            zombie = is_zombie(pid);
+            if zombie {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let (pids, matches) = scan_proc(&[named("true")], &HashSet::new()).unwrap();
+        let _ = child.wait();
+
+        assert!(zombie, "child never became a zombie");
+        assert!(pids.contains(&pid), "a zombie still has a /proc entry");
+        assert!(matches.iter().all(|p| p.pid != pid), "a zombie was matched as running");
+        assert!(!is_zombie(std::process::id()));
+        assert!(!is_zombie(u32::MAX));
+    }
+
+    #[test]
+    fn wait_for_exit_returns_when_the_process_ends() {
+        let mut child = std::process::Command::new("sleep").arg("0.3").spawn().unwrap();
+        let started = std::time::Instant::now();
+        assert!(wait_for_exit(child.id()), "pidfd wait unavailable on this kernel");
+        let waited = started.elapsed();
+        let _ = child.wait();
+        assert!(waited >= Duration::from_millis(200), "returned early after {waited:?}");
+        assert!(waited < Duration::from_secs(3), "returned late after {waited:?}");
+
+        // A PID that doesn't exist can't be waited on.
+        assert!(!wait_for_exit(u32::MAX));
+        assert!(!wait_for_exit(i32::MAX as u32));
+    }
+
+    #[test]
+    fn process_list_contains_this_process() {
+        let pid = std::process::id();
+        let me = list_processes_linux().into_iter().find(|p| p.pid == pid).unwrap();
+        assert_eq!(me.exe_path, own_exe());
+        assert!(!me.name.is_empty());
+    }
 }

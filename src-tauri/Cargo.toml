@@ -1,6 +1,6 @@
 [package]
 name = "intelligent-hz-changer"
-version = "0.2.1"
+version = "0.3.0"
 description = "Eine App zum automatischen Wechseln der Bildschirm Hz anhand von laufenden Prozessen"
 authors = ["you"]
 edition = "2021"
@@ -32,8 +32,10 @@ base64 = "0.22"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
   "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
   "Win32_Foundation",
   "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Registry",
   "Win32_System_SystemInformation",
   "Win32_UI_WindowsAndMessaging",
@@ -46,6 +48,7 @@ wmi = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+libc = "0.2"
 zbus = { version = "5.19.0", default-features = false, features = ["blocking"] }
 
 # MSVC link.exe prints "Creating library ... .dll.lib and object ... .dll.exp"

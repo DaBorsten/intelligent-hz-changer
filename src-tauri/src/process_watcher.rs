@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Resolves an exe path from a PID via QueryFullProcessImageNameW.
-/// WMI returns null ExecutablePath for Vanguard/EAC-protected processes — this succeeds where WMI fails.
+/// Works for elevated and most protected processes; `None` for those that refuse even limited query access.
 #[cfg(windows)]
 pub(crate) fn exe_path_from_pid(pid: u32) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
@@ -27,6 +27,242 @@ pub(crate) fn exe_path_from_pid(pid: u32) -> Option<String> {
         let _ = CloseHandle(handle);
         ok.ok().map(|_| String::from_utf16_lossy(&buf[..size as usize]))
     }
+}
+
+/// Calls `f` with the PID and image name (UTF-16, no terminator) of every
+/// running process, straight from a Toolhelp snapshot. Needs no privileges and
+/// sees elevated and protected processes too. Returns false if the snapshot
+/// couldn't be taken or read, in which case `f` may have seen nothing.
+#[cfg(windows)]
+pub(crate) fn for_each_process(mut f: impl FnMut(u32, &[u16])) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return false;
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
+        let any = more;
+        while more {
+            let name = &entry.szExeFile;
+            let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            f(entry.th32ProcessID, &name[..len]);
+            more = Process32NextW(snapshot, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snapshot);
+        any
+    }
+}
+
+/// Whether this system supports the fast process query (Windows 11 24H2 and
+/// later). Tested once, on first use; never true on other platforms.
+pub(crate) fn fast_detection_available() -> bool {
+    #[cfg(windows)]
+    {
+        fast_list::available()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// `for_each_process` through the API the user picked: the fast kernel query
+/// if `fast` is set and this Windows supports it, the Toolhelp snapshot
+/// otherwise.
+#[cfg(windows)]
+pub(crate) fn for_each_process_with(fast: bool, mut f: impl FnMut(u32, &[u16])) -> bool {
+    if fast {
+        if let Some(complete) = fast_list::for_each_process(&mut f) {
+            return complete;
+        }
+    }
+    for_each_process(f)
+}
+
+/// The "performance" process listing: `NtQuerySystemInformation` with the
+/// `SystemBasicProcessInformation` class, which returns nothing but PID,
+/// parent and image name per process. A Toolhelp snapshot is built on the full
+/// `SystemProcessInformation` class instead, which also collects every thread
+/// of every process — some hundred times the work for the same two fields.
+///
+/// The class only exists from Windows 11 24H2 on and is not part of the
+/// documented API, so nothing here is taken on trust: the first listing must
+/// contain this very process under its own name, or the method is switched off
+/// for the rest of the run and the caller falls back to Toolhelp.
+#[cfg(windows)]
+mod fast_list {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::Mutex;
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQuerySystemInformation(
+            class: u32,
+            info: *mut core::ffi::c_void,
+            len: u32,
+            return_len: *mut u32,
+        ) -> i32;
+    }
+
+    const SYSTEM_BASIC_PROCESS_INFORMATION: u32 = 252;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
+
+    /// `SYSTEM_BASICPROCESS_INFORMATION`. The name is a `UNICODE_STRING` whose
+    /// buffer points into the same result buffer.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Entry {
+        next_entry_offset: u32,
+        process_id: usize,
+        parent_process_id: usize,
+        sequence_number: u64,
+        name_bytes: u16,
+        name_capacity: u16,
+        name: *const u16,
+    }
+
+    const UNTESTED: u8 = 0;
+    const WORKS: u8 = 1;
+    const UNAVAILABLE: u8 = 2;
+    static STATE: AtomicU8 = AtomicU8::new(UNTESTED);
+
+    /// Result buffer, kept between scans (a few dozen KB). `u64` elements so
+    /// the entries the kernel writes are suitably aligned.
+    static BUFFER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+    /// Calls `f` for every process. `None` if this method is unavailable, in
+    /// which case `f` was not called; `Some(false)` if a listing went wrong
+    /// part-way.
+    pub(crate) fn for_each_process(f: &mut impl FnMut(u32, &[u16])) -> Option<bool> {
+        if !available() {
+            return None;
+        }
+        let complete = list(f);
+        if !complete {
+            // It passed its check once and broke later: don't keep trying.
+            STATE.store(UNAVAILABLE, Ordering::Relaxed);
+            crate::logging::log("process detection: fast kernel query failed, using Toolhelp");
+        }
+        Some(complete)
+    }
+
+    /// Whether the query works here. Tested on the first call; a later
+    /// failure also turns it off.
+    pub(crate) fn available() -> bool {
+        match STATE.load(Ordering::Relaxed) {
+            WORKS => true,
+            UNAVAILABLE => false,
+            _ => {
+                let works = lists_this_process();
+                STATE.store(if works { WORKS } else { UNAVAILABLE }, Ordering::Relaxed);
+                crate::logging::log(if works {
+                    "process detection: fast kernel query available"
+                } else {
+                    "process detection: fast kernel query unavailable"
+                });
+                works
+            }
+        }
+    }
+
+    /// True if a listing completes and names this process correctly.
+    fn lists_this_process() -> bool {
+        let Some(own_name) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        else {
+            return false;
+        };
+        let own_pid = std::process::id();
+        let mut found = false;
+        let complete = list(&mut |pid, name| {
+            found |= pid == own_pid && super::wide_eq_ignore_ascii_case(name, &own_name);
+        });
+        complete && found
+    }
+
+    fn list(f: &mut impl FnMut(u32, &[u16])) -> bool {
+        let mut buf = BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+        if buf.is_empty() {
+            buf.resize(8 * 1024, 0); // 64 KB
+        }
+
+        // The process list can grow between the size probe and the next call.
+        let mut written = 0u32;
+        let mut ok = false;
+        for _ in 0..4 {
+            let capacity = (buf.len() * 8) as u32;
+            let status = unsafe {
+                NtQuerySystemInformation(
+                    SYSTEM_BASIC_PROCESS_INFORMATION,
+                    buf.as_mut_ptr().cast(),
+                    capacity,
+                    &mut written,
+                )
+            };
+            if status == STATUS_INFO_LENGTH_MISMATCH {
+                let wanted = (written.max(capacity) as usize + 16 * 1024).min(16 << 20);
+                buf.resize(wanted / 8, 0);
+                continue;
+            }
+            ok = status >= 0 && written <= capacity;
+            break;
+        }
+        if !ok {
+            return false;
+        }
+
+        // Every offset and pointer below comes from the kernel's answer; each
+        // is checked against the bytes actually written before it is used.
+        let base = buf.as_ptr() as usize;
+        let end = base + written as usize;
+        let mut at = base;
+        loop {
+            if !at.is_multiple_of(8) || at + std::mem::size_of::<Entry>() > end {
+                return false;
+            }
+            let entry = unsafe { *(at as *const Entry) };
+
+            let name_start = entry.name as usize;
+            let name_bytes = entry.name_bytes as usize;
+            let name: &[u16] = if name_bytes == 0 {
+                &[]
+            } else if name_start >= base && name_start.is_multiple_of(2) && name_start + name_bytes <= end {
+                unsafe { std::slice::from_raw_parts(entry.name, name_bytes / 2) }
+            } else {
+                return false;
+            };
+            f(entry.process_id as u32, name);
+
+            if entry.next_entry_offset == 0 {
+                return true;
+            }
+            at += entry.next_entry_offset as usize;
+        }
+    }
+}
+
+/// `str::eq_ignore_ascii_case` for a UTF-16 name against a `&str`, so a process
+/// name can be checked against the watch list without decoding it first.
+#[cfg(any(windows, test))]
+pub(crate) fn wide_eq_ignore_ascii_case(wide: &[u16], s: &str) -> bool {
+    fn lower(c: u16) -> u16 {
+        if (b'A' as u16..=b'Z' as u16).contains(&c) {
+            c + 32
+        } else {
+            c
+        }
+    }
+    wide.iter().map(|&c| lower(c)).eq(s.encode_utf16().map(lower))
 }
 
 /// Legacy per-monitor Hz pair, read only to migrate old configs.
@@ -65,6 +301,15 @@ pub enum WatchedProcess {
 }
 
 impl WatchedProcess {
+    /// The process name this entry watches. A name match is necessary for the
+    /// entry to match at all, so failing it rules a process out without
+    /// resolving its executable path.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Name(n) | Self::WithPath { name: n, .. } => n,
+        }
+    }
+
     /// Unique key used as HashMap key in running/counts maps.
     pub fn key(&self) -> String {
         match self {
@@ -346,6 +591,67 @@ mod tests {
     }
 
     #[test]
+    fn wide_names_compare_like_eq_ignore_ascii_case() {
+        let wide = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        assert!(wide_eq_ignore_ascii_case(&wide("Game.EXE"), "game.exe"));
+        assert!(wide_eq_ignore_ascii_case(&wide("spiel-ü.exe"), "Spiel-ü.exe"));
+        assert!(wide_eq_ignore_ascii_case(&wide(""), ""));
+        // Only ASCII folds, exactly like `str::eq_ignore_ascii_case`.
+        assert!(!wide_eq_ignore_ascii_case(&wide("spiel-Ü.exe"), "spiel-ü.exe"));
+        // A prefix in either direction is not a match.
+        assert!(!wide_eq_ignore_ascii_case(&wide("game.exe"), "game.exe2"));
+        assert!(!wide_eq_ignore_ascii_case(&wide("game.exe2"), "game.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_snapshot_contains_this_process() {
+        let me = std::process::id();
+        let exe = std::env::current_exe().unwrap();
+        let base = exe.file_name().unwrap().to_string_lossy().into_owned();
+        let mut found = None;
+        assert!(for_each_process(|pid, name| {
+            if pid == me {
+                found = Some(String::from_utf16_lossy(name));
+            }
+        }));
+        assert_eq!(found.as_deref(), Some(base.as_str()));
+    }
+
+    /// The fast listing and the Toolhelp snapshot must describe the same
+    /// processes. On a Windows without the fast query there is nothing to
+    /// compare, and `for_each_process_with` is covered by the test above.
+    #[cfg(windows)]
+    #[test]
+    fn fast_listing_agrees_with_the_snapshot() {
+        let mut fast: HashMap<u32, String> = HashMap::new();
+        let Some(complete) = fast_list::for_each_process(&mut |pid, name| {
+            fast.insert(pid, String::from_utf16_lossy(name));
+        }) else {
+            return;
+        };
+        assert!(complete);
+
+        let mut snapshot: HashMap<u32, String> = HashMap::new();
+        assert!(for_each_process(|pid, name| {
+            snapshot.insert(pid, String::from_utf16_lossy(name));
+        }));
+
+        // Processes come and go between the two listings, so compare the PIDs
+        // both saw: those must carry the same name (PID 0 is the idle
+        // pseudo-process, which the two APIs label differently).
+        let shared: Vec<u32> = fast
+            .keys()
+            .filter(|pid| **pid != 0 && snapshot.contains_key(pid))
+            .copied()
+            .collect();
+        assert!(shared.len() * 10 >= snapshot.len() * 9, "listings barely overlap");
+        for pid in shared {
+            assert_eq!(fast[&pid], snapshot[&pid], "pid {pid}");
+        }
+    }
+
+    #[test]
     fn start_and_stop_edges_fire_once() {
         let s = WatchState::new(cfg(&["game.exe"]), true);
 
@@ -503,5 +809,171 @@ mod tests {
     fn enabled_is_taken_from_the_caller() {
         assert!(!WatchState::new(cfg(&[]), false).is_enabled());
         assert!(WatchState::new(cfg(&[]), true).is_enabled());
+    }
+
+    #[test]
+    fn set_enabled_toggles_state() {
+        let s = WatchState::new(cfg(&[]), true);
+        s.set_enabled(false);
+        assert!(!s.is_enabled());
+        s.set_enabled(true);
+        assert!(s.is_enabled());
+    }
+
+    fn with_path(name: &str, path: &str) -> WatchedProcess {
+        WatchedProcess::WithPath { name: name.into(), path: path.into() }
+    }
+
+    #[test]
+    fn keys_are_lowercased_and_include_the_path() {
+        assert_eq!(WatchedProcess::Name("Game.EXE".into()).key(), "game.exe");
+        assert_eq!(
+            with_path("Game.exe", r"C:\Games\Foo").key(),
+            r"game.exe|c:\games\foo"
+        );
+    }
+
+    #[test]
+    fn name_entries_match_case_insensitively_on_any_path() {
+        let p = WatchedProcess::Name("game.exe".into());
+        assert!(p.matches("GAME.EXE", ""));
+        assert!(p.matches("game.exe", r"C:\anywhere\game.exe"));
+        assert!(!p.matches("game2.exe", ""));
+    }
+
+    #[test]
+    fn path_entries_require_the_path_fragment() {
+        let p = with_path("game.exe", r"C:\Games\Foo");
+        assert!(p.matches("Game.exe", r"c:\games\foo\bin\game.exe"));
+        // Same name, different install: a second copy must not trigger.
+        assert!(!p.matches("game.exe", r"C:\Other\game.exe"));
+        // Unknown path (e.g. anti-cheat protected process) does not match.
+        assert!(!p.matches("game.exe", ""));
+        assert!(!p.matches("other.exe", r"C:\Games\Foo\other.exe"));
+    }
+
+    #[test]
+    fn watched_process_serializes_untagged() {
+        let list: Vec<WatchedProcess> = serde_json::from_str(
+            r#"["a.exe", {"name": "b.exe", "path": "C:\\B"}]"#,
+        )
+        .unwrap();
+        assert!(matches!(&list[0], WatchedProcess::Name(n) if n == "a.exe"));
+        assert!(matches!(&list[1], WatchedProcess::WithPath { name, path }
+            if name == "b.exe" && path == r"C:\B"));
+
+        // Name-only entries stay plain strings so old configs keep their shape.
+        let out = serde_json::to_string(&list).unwrap();
+        assert_eq!(out, r#"["a.exe",{"name":"b.exe","path":"C:\\B"}]"#);
+    }
+
+    #[test]
+    fn path_entries_use_their_full_key_for_state_and_disabling() {
+        let entry = with_path("game.exe", r"C:\Games\Foo");
+        let key = entry.key();
+        let c = WatchConfig { watched_processes: vec![entry], ..Default::default() };
+        let s = WatchState::new(c.clone(), true);
+
+        assert!(s.on_process_start("game.exe", r"C:\Games\Foo\game.exe", 7));
+        assert_eq!(s.get_running(), vec![key.clone()]);
+        assert_eq!(s.get_process_counts()[&key], 1);
+
+        // Disabling by the bare name does nothing; the composite key is needed.
+        let mut by_name = c.clone();
+        by_name.disabled_processes = vec!["game.exe".into()];
+        s.update_config(by_name);
+        assert!(s.is_any_running());
+
+        let mut by_key = c;
+        by_key.disabled_processes = vec![key];
+        s.update_config(by_key);
+        assert!(!s.is_any_running());
+    }
+
+    #[test]
+    fn get_running_reports_each_entry_once() {
+        let s = WatchState::new(cfg(&["a.exe", "b.exe"]), true);
+        s.on_process_start("a.exe", "", 1);
+        s.on_process_start("a.exe", "", 2);
+        s.on_process_start("b.exe", "", 3);
+        let mut running = s.get_running();
+        running.sort();
+        assert_eq!(running, vec!["a.exe".to_string(), "b.exe".to_string()]);
+        let mut pids = s.running_pids();
+        pids.sort();
+        assert_eq!(pids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn first_matching_entry_wins() {
+        // A name-only entry listed first claims the process even if a later
+        // path entry would also match.
+        let c = WatchConfig {
+            watched_processes: vec![
+                WatchedProcess::Name("game.exe".into()),
+                with_path("game.exe", r"C:\Games"),
+            ],
+            ..Default::default()
+        };
+        let s = WatchState::new(c, true);
+        s.on_process_start("game.exe", r"C:\Games\game.exe", 1);
+        assert_eq!(s.get_running(), vec!["game.exe".to_string()]);
+    }
+
+    #[test]
+    fn status_monitor_prefers_the_first_enabled_one() {
+        let mut c = cfg(&[]);
+        assert_eq!(c.status_monitor(), None);
+        c.monitors.insert("A".into(), profile(false, 144, 60));
+        c.monitors.insert("B".into(), profile(true, 144, 60));
+        c.monitors.insert("C".into(), profile(true, 144, 60));
+        assert_eq!(c.status_monitor(), Some("B"));
+    }
+
+    #[test]
+    fn keep_override_never_raises_a_monitor() {
+        let mut c = cfg(&["a.exe"]);
+        c.monitors.insert("M1".into(), profile(true, 144, 60));
+        c.process_overrides
+            .insert("a.exe".into(), HashMap::from([("M1".into(), HzOverride::Keep)]));
+        assert_eq!(c.hz_targets(&["a.exe".into()]), vec![("M1".into(), 60)]);
+    }
+
+    #[test]
+    fn running_keys_without_config_entries_fall_back_to_globals() {
+        let mut c = cfg(&[]);
+        c.monitors.insert("M1".into(), profile(true, 144, 60));
+        assert_eq!(c.hz_targets(&["ghost.exe".into()]), vec![("M1".into(), 144)]);
+    }
+
+    #[test]
+    fn parse_keeps_new_layout_and_ignores_legacy_fields() {
+        let json = r#"{
+            "watched_processes": [],
+            "monitors": { "M1": { "enabled": false, "game_hz": 120, "default_hz": 60 } },
+            "monitor_name": "M2",
+            "game_hz": 240
+        }"#;
+        let c = WatchConfig::parse(json).unwrap();
+        assert_eq!(c.monitors.len(), 1);
+        assert_eq!(c.monitors["M1"], profile(false, 120, 60));
+    }
+
+    #[test]
+    fn parse_fills_defaults_and_rejects_garbage() {
+        let c = WatchConfig::parse(r#"{"watched_processes":["a.exe"]}"#).unwrap();
+        assert!(c.monitors.is_empty());
+        assert!(c.disabled_processes.is_empty());
+        assert!(c.process_overrides.is_empty());
+        assert!(WatchConfig::parse("{}").is_err());
+        assert!(WatchConfig::parse("not json").is_err());
+    }
+
+    #[test]
+    fn override_deserialization() {
+        let o: HashMap<String, HzOverride> =
+            serde_json::from_str(r#"{"M1":"keep","M2":{"hz":90}}"#).unwrap();
+        assert_eq!(o["M1"], HzOverride::Keep);
+        assert_eq!(o["M2"], HzOverride::Hz(90));
     }
 }

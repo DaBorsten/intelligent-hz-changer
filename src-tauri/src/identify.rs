@@ -283,10 +283,8 @@ mod gtk_overlay {
         let payload = Payload { badges, is_light };
         let Ok(json) = serde_json::to_string(&payload) else { return };
 
-        if std::env::var_os("DISPLAY").is_some() {
-            if spawn_child(&json).is_ok() {
-                return;
-            }
+        if std::env::var_os("DISPLAY").is_some() && spawn_child(&json).is_ok() {
+            return;
         }
         // No X server to fall back on: draw in-process instead. The badges then
         // land wherever the compositor puts them — one per display is still
@@ -337,7 +335,7 @@ mod gtk_overlay {
             return;
         }
 
-        glib::timeout_add_local_once(Duration::from_millis(VISIBLE_MS), || gtk::main_quit());
+        glib::timeout_add_local_once(Duration::from_millis(VISIBLE_MS), gtk::main_quit);
         gtk::main();
     }
 
@@ -439,5 +437,29 @@ mod gtk_overlay {
              \x20 font-weight: bold;\n\
              }}\n"
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::css;
+
+        #[test]
+        fn css_follows_the_theme() {
+            let light = css("1", true);
+            assert!(light.contains("background-color: #ffffff;"));
+            assert!(light.contains("color: #111111;"));
+            let dark = css("1", false);
+            assert!(dark.contains("background-color: #0e0e0e;"));
+            assert!(dark.contains("border: 1px solid #444444;"));
+        }
+
+        #[test]
+        fn long_labels_shrink_to_fit_the_badge() {
+            // Single digits are capped; "1|2" for cloned displays must shrink.
+            assert!(css("1", false).contains("font-size: 180px;"));
+            assert!(css("", false).contains("font-size: 180px;"));
+            assert!(css("1|2", false).contains("font-size: 169px;"));
+            assert!(css("1|2|3", false).contains("font-size: 101px;"));
+        }
     }
 }

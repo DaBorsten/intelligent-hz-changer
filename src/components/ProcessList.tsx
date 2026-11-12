@@ -34,6 +34,7 @@ interface Props {
 interface RunningProcess {
   name: string;
   path: string | null;
+  has_window: boolean;
 }
 
 const ICON_CACHE_KEY = "hz-process-icons";
@@ -457,6 +458,18 @@ export function ProcessList({ config, onChange }: Props) {
   const filteredPicker = pickerList.filter((p) =>
     p.name.toLowerCase().includes(pickerSearch.toLowerCase()),
   );
+  // Like Task Manager: processes with a visible window first, the rest below.
+  const pickerApps = filteredPicker.filter((p) => p.has_window);
+  const pickerGroups =
+    pickerApps.length === 0
+      ? [{ label: null, items: filteredPicker }]
+      : [
+          { label: t("processes.pickerApps"), items: pickerApps },
+          {
+            label: t("processes.pickerBackground"),
+            items: filteredPicker.filter((p) => !p.has_window),
+          },
+        ].filter((g) => g.items.length > 0);
   // A Windows process is always named after its exe, so picking a path fully
   // determines the name. Linux reports `comm`, which can differ from the file's
   // basename (shell scripts, Proton-wrapped games), so the name stays editable.
@@ -765,128 +778,148 @@ export function ProcessList({ config, onChange }: Props) {
                     {t("processes.noRunning")}
                   </p>
                 ) : (
-                  filteredPicker.map((rp) => {
-                    const alreadyAdded = processes.some(
-                      (p) => wpName(p).toLowerCase() === rp.name.toLowerCase(),
-                    );
-                    const iconKey = rp.name.toLowerCase();
-                    const icon =
-                      pickerIcons[iconKey] ?? loadIconCache()[iconKey] ?? null;
-                    return (
-                      <div
-                        key={rp.name}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-chip transition-colors"
-                      >
-                        <div
-                          className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-chip"}`}
-                        >
-                          {icon ? (
-                            <img
-                              src={icon}
-                              alt=""
-                              className="w-8 h-8 object-contain"
-                            />
-                          ) : (
-                            <svg
-                              width="16"
-                              height="16"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                            >
-                              <rect
-                                x="1.5"
-                                y="2.5"
-                                width="13"
-                                height="11"
-                                rx="2"
-                                stroke="currentColor"
-                                strokeWidth="1.3"
-                              />
-                              <path
-                                d="M1.5 6h13"
-                                stroke="currentColor"
-                                strokeWidth="1.1"
-                              />
-                              <circle cx="4" cy="4.25" r="0.8" fill="currentColor" />
-                              <circle
-                                cx="6.5"
-                                cy="4.25"
-                                r="0.8"
-                                fill="currentColor"
-                              />
-                              <path
-                                d="M4.5 9l2.5 1.5-2.5 1.5"
-                                stroke="currentColor"
-                                strokeWidth="1.1"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                              <path
-                                d="M9 11.5h2"
-                                stroke="currentColor"
-                                strokeWidth="1.1"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div
-                            className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-muted" : "text-fg"}`}
-                          >
-                            {rp.name}
-                          </div>
-                          {rp.path && (
-                            <div
-                              className="text-[10px] font-mono text-muted truncate mt-0.5"
-                              title={rp.path}
-                            >
-                              {rp.path}
-                            </div>
-                          )}
-                        </div>
-                        {alreadyAdded ? (
-                          <span className="flex items-center gap-1 text-xs text-emerald-500 dark:text-emerald-400 shrink-0 font-medium">
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="none"
-                            >
-                              <path
-                                d="M2 6l3 3 5-5"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                            {t("processes.added")}
+                  pickerGroups.map((group) => (
+                    <div key={group.label ?? "all"}>
+                      {group.label && (
+                        <div className="sticky top-0 z-10 px-4 pt-3 pb-1.5 bg-surface text-[10.5px] font-semibold uppercase tracking-wider text-muted flex items-center gap-2">
+                          {group.label}
+                          <span className="font-mono normal-case tracking-normal text-faint">
+                            {group.items.length}
                           </span>
-                        ) : (
-                          <button
-                            onClick={() => pickProcess(rp)}
-                            className="flex items-center gap-1 text-xs text-muted hover:text-accent-text shrink-0 transition-colors font-medium btn-press"
+                        </div>
+                      )}
+                      {group.items.map((rp) => {
+                        const alreadyAdded = processes.some(
+                          (p) =>
+                            wpName(p).toLowerCase() === rp.name.toLowerCase(),
+                        );
+                        const iconKey = rp.name.toLowerCase();
+                        const icon =
+                          pickerIcons[iconKey] ??
+                          loadIconCache()[iconKey] ??
+                          null;
+                        return (
+                          <div
+                            key={rp.name}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-chip transition-colors"
                           >
-                            <svg
-                              width="11"
-                              height="11"
-                              viewBox="0 0 11 11"
-                              fill="none"
+                            <div
+                              className={`w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden ${icon ? "" : "rounded-lg bg-chip"}`}
                             >
-                              <path
-                                d="M5.5 1v9M1 5.5h9"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                            {t("processes.add")}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
+                              {icon ? (
+                                <img
+                                  src={icon}
+                                  alt=""
+                                  className="w-8 h-8 object-contain"
+                                />
+                              ) : (
+                                <svg
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                >
+                                  <rect
+                                    x="1.5"
+                                    y="2.5"
+                                    width="13"
+                                    height="11"
+                                    rx="2"
+                                    stroke="currentColor"
+                                    strokeWidth="1.3"
+                                  />
+                                  <path
+                                    d="M1.5 6h13"
+                                    stroke="currentColor"
+                                    strokeWidth="1.1"
+                                  />
+                                  <circle
+                                    cx="4"
+                                    cy="4.25"
+                                    r="0.8"
+                                    fill="currentColor"
+                                  />
+                                  <circle
+                                    cx="6.5"
+                                    cy="4.25"
+                                    r="0.8"
+                                    fill="currentColor"
+                                  />
+                                  <path
+                                    d="M4.5 9l2.5 1.5-2.5 1.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.1"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                  <path
+                                    d="M9 11.5h2"
+                                    stroke="currentColor"
+                                    strokeWidth="1.1"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div
+                                className={`text-xs font-semibold font-mono truncate ${alreadyAdded ? "text-muted" : "text-fg"}`}
+                              >
+                                {rp.name}
+                              </div>
+                              {rp.path && (
+                                <div
+                                  className="text-[10px] font-mono text-muted truncate mt-0.5"
+                                  title={rp.path}
+                                >
+                                  {rp.path}
+                                </div>
+                              )}
+                            </div>
+                            {alreadyAdded ? (
+                              <span className="flex items-center gap-1 text-xs text-emerald-500 dark:text-emerald-400 shrink-0 font-medium">
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                >
+                                  <path
+                                    d="M2 6l3 3 5-5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                                {t("processes.added")}
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => pickProcess(rp)}
+                                className="flex items-center gap-1 text-xs text-muted hover:text-accent-text shrink-0 transition-colors font-medium btn-press"
+                              >
+                                <svg
+                                  width="11"
+                                  height="11"
+                                  viewBox="0 0 11 11"
+                                  fill="none"
+                                >
+                                  <path
+                                    d="M5.5 1v9M1 5.5h9"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                                {t("processes.add")}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))
                 )}
               </div>
             </div>

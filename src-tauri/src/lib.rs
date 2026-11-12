@@ -205,11 +205,11 @@ fn save_config(
 
     state.watch_state.update_config(config);
 
-    // A process just added to the list may already be running — no WMI creation
-    // event (Windows) or poll tick (Linux) will otherwise catch it for up to
-    // one interval, so reconcile the running set once now. Off the IPC thread:
-    // a full process enumeration takes 100–500 ms and would otherwise block
-    // the command (and with it the UI's await).
+    // A process just added to the list may already be running — the watcher's
+    // next scan would only catch it up to one interval later, so reconcile the
+    // running set once now. Off the IPC thread: applying the Hz that follows
+    // from it is a mode-set, which would otherwise block the command (and with
+    // it the UI's await).
     #[cfg(any(windows, target_os = "linux"))]
     {
         let ws = Arc::clone(&state.watch_state);
@@ -504,7 +504,14 @@ fn load_settings(app: tauri::AppHandle) -> settings::AppSettings {
     // toggle) are shown correctly.
     s.autostart = settings::get_autostart("IntelligentHzChanger");
 
-    s
+    // The UI shows the detection method and interval in effect, not "unset".
+    s.resolved(process_watcher::fast_detection_available())
+}
+
+/// Whether the settings UI has a detection method to offer at all.
+#[tauri::command]
+fn get_fast_detection_available() -> bool {
+    process_watcher::fast_detection_available()
 }
 
 #[tauri::command]
@@ -517,8 +524,16 @@ fn save_settings(
     // live runtime value so a settings save can never silently re-enable the watcher.
     s.enabled = state.watch_state.is_enabled();
 
+    // The UI echoes back the detection defaults it was shown; store only what
+    // differs from them, so the rest keeps following the defaults.
+    let s = s.normalized(process_watcher::fast_detection_available());
+
     // Apply the debug-logging toggle to the live runtime flag immediately.
     logging::set_enabled(s.debug_logging);
+
+    // Likewise the scan interval and detection method: the watcher picks them
+    // up with its next scan.
+    watcher::apply_settings(&s);
 
     // Persist close_to_tray in runtime state
     state.close_to_tray.store(
@@ -545,9 +560,9 @@ async fn get_process_icon(process_name: String, exe_path: Option<String>) -> Opt
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         {
-            // Prefer the provided path (elevated processes like Fortnite/Vanguard
-            // return null ExecutablePath from WMI, so find_exe_path fails for
-            // them), but only if it belongs to a real running process — the path
+            // Prefer the provided path (the entry may name a specific install,
+            // and the process needn't be running under that name right now),
+            // but only if it belongs to a real running process — the path
             // comes from the renderer and is otherwise unvalidated.
             let path = exe_path
                 .filter(|p| !p.is_empty() && is_known_process_path(p))
@@ -571,41 +586,22 @@ async fn get_process_icon(process_name: String, exe_path: Option<String>) -> Opt
     .unwrap_or(None)
 }
 
-/// Snapshot of running processes via WMI: (Name, ExecutablePath).
-/// Replaces spawning `powershell.exe` — no process startup cost and no string
-/// interpolation, so a process name can never be used for command injection.
+/// Snapshot of running processes: (name, executable path). The path is `None`
+/// for processes that don't let an unprivileged caller read it (system
+/// processes, mostly).
 #[cfg(windows)]
 fn query_processes() -> Vec<(String, Option<String>)> {
-    use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
-
-    #[derive(Deserialize)]
-    #[serde(rename = "Win32_Process")]
-    #[serde(rename_all = "PascalCase")]
-    struct Proc {
-        name: String,
-        executable_path: Option<String>,
-        process_id: u32,
-    }
-
-    // spawn_blocking threads may be reused and already COM-initialized.
-    let com = COMLibrary::new().unwrap_or_else(|_| unsafe { COMLibrary::assume_initialized() });
-    let Ok(con) = WMIConnection::new(com) else {
-        return vec![];
-    };
-    let results: Result<Vec<Proc>, _> = con.query();
-    results
-        .map(|v| {
-            v.into_iter()
-                .map(|p| {
-                    // WMI returns null ExecutablePath for Vanguard-protected processes even as
-                    // admin. QueryFullProcessImageNameW succeeds where WMI fails.
-                    let path = p.executable_path.or_else(|| process_watcher::exe_path_from_pid(p.process_id));
-                    (p.name, path)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let mut processes = Vec::new();
+    process_watcher::for_each_process(|pid, name| {
+        // PID 0 is the idle pseudo-process, not something one can watch.
+        if pid != 0 {
+            processes.push((
+                String::from_utf16_lossy(name),
+                process_watcher::exe_path_from_pid(pid),
+            ));
+        }
+    });
+    processes
 }
 
 
@@ -644,6 +640,57 @@ async fn get_all_running_processes() -> Vec<String> {
 struct RunningProcess {
     name: String,
     path: Option<String>,
+    /// Owns a visible top-level window, i.e. what Task Manager lists under "Apps".
+    has_window: bool,
+}
+
+/// PIDs owning a window Task Manager would count as an app: visible, titled,
+/// unowned, not a tool window and not cloaked (suspended UWP apps and windows
+/// on other virtual desktops stay cloaked while "visible").
+#[cfg(windows)]
+fn windowed_pids() -> std::collections::HashSet<u32> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowLongW, GetWindowTextLengthW,
+        GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_OWNER,
+        WS_EX_TOOLWINDOW,
+    };
+
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let pids = &mut *(lparam.0 as *mut std::collections::HashSet<u32>);
+        if !IsWindowVisible(hwnd).as_bool() || GetWindowTextLengthW(hwnd) == 0 {
+            return BOOL(1);
+        }
+        if GetWindow(hwnd, GW_OWNER).is_ok_and(|o| !o.is_invalid()) {
+            return BOOL(1);
+        }
+        if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
+            return BOOL(1);
+        }
+        let mut cloaked = 0u32;
+        let _ = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        );
+        if cloaked != 0 {
+            return BOOL(1);
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid != 0 {
+            pids.insert(pid);
+        }
+        BOOL(1)
+    }
+
+    let mut pids = std::collections::HashSet::new();
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM(&mut pids as *mut _ as isize));
+    }
+    pids
 }
 
 #[tauri::command]
@@ -651,13 +698,35 @@ async fn get_running_processes_with_paths() -> Vec<RunningProcess> {
     tauri::async_runtime::spawn_blocking(|| {
         #[cfg(windows)]
         {
-            let mut seen = std::collections::HashSet::new();
-            let mut procs: Vec<RunningProcess> = query_processes()
-                .into_iter()
-                .filter(|(n, _)| !n.is_empty())
-                .filter(|(n, _)| seen.insert(n.to_lowercase()))
-                .map(|(name, path)| RunningProcess { name, path })
-                .collect();
+            let windowed = windowed_pids();
+            let own_pid = std::process::id();
+            let mut by_name: std::collections::HashMap<String, RunningProcess> =
+                std::collections::HashMap::new();
+            process_watcher::for_each_process(|pid, name| {
+                if pid == 0 || name.is_empty() {
+                    return;
+                }
+                let has_window = pid != own_pid && windowed.contains(&pid);
+                let name = String::from_utf16_lossy(name);
+                match by_name.entry(name.to_lowercase()) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        // Prefer the instance that owns the window, so its path is shown.
+                        if has_window && !e.get().has_window {
+                            let rp = e.get_mut();
+                            rp.has_window = true;
+                            rp.path = process_watcher::exe_path_from_pid(pid).or(rp.path.take());
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(RunningProcess {
+                            name,
+                            path: process_watcher::exe_path_from_pid(pid),
+                            has_window,
+                        });
+                    }
+                }
+            });
+            let mut procs: Vec<RunningProcess> = by_name.into_values().collect();
             procs.sort_unstable_by_key(|p| p.name.to_lowercase());
             procs
         }
@@ -667,7 +736,11 @@ async fn get_running_processes_with_paths() -> Vec<RunningProcess> {
             let mut procs: Vec<RunningProcess> = list_user_processes_linux()
                 .into_iter()
                 .filter(|p| seen.insert(p.name.to_lowercase()))
-                .map(|p| RunningProcess { name: p.name, path: Some(p.exe_path) })
+                .map(|p| RunningProcess {
+                    name: p.name,
+                    path: Some(p.exe_path),
+                    has_window: false,
+                })
                 .collect();
             procs.sort_unstable_by_key(|p| p.name.to_lowercase());
             procs
@@ -692,8 +765,8 @@ fn list_user_processes_linux() -> Vec<watcher::ProcInfo> {
 }
 
 /// Cached process snapshot for icon lookups. Resolving N icons on a tab render
-/// would otherwise run N full WMI enumerations (~100–500 ms each); process
-/// paths barely change, so a short TTL collapses a burst into one query.
+/// would otherwise resolve every process's path N times; process paths barely
+/// change, so a short TTL collapses a burst into one query.
 /// (process name, executable path) pairs as returned by `query_processes`.
 #[cfg(windows)]
 type ProcSnapshot = Vec<(String, Option<String>)>;
@@ -719,9 +792,7 @@ fn query_processes_cached() -> ProcSnapshot {
     fresh
 }
 
-/// Resolves a process name to its executable path via WMI.
-/// `ExecutablePath` is populated regardless of privilege level (unlike
-/// `Get-Process .Path`, which is null for elevated processes like Vanguard).
+/// Resolves a process name to the executable path of a running instance.
 #[cfg(windows)]
 fn find_exe_path(process_name: &str) -> Option<String> {
     query_processes_cached()
@@ -882,7 +953,7 @@ pub fn run() {
             }
             let _tray = tray_builder.build(app)?;
 
-            // Load config and start WMI watcher
+            // Load config and start the process watcher
             let config = load_config_from_disk(app.handle());
             let startup_monitor = config.status_monitor().unwrap_or_default().to_string();
             // Restore the persisted enabled/paused state across restarts up
@@ -904,6 +975,7 @@ pub fn run() {
                 create_main_window(app.handle())?;
             }
 
+            watcher::apply_settings(&app_settings);
             watcher::start(watch_state, app.handle().clone());
 
             // Emit startup event once the frontend is ready
@@ -960,6 +1032,7 @@ pub fn run() {
             show_update_notification,
             check_exe_exists,
             get_hz_log,
+            get_fast_detection_available,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -1000,5 +1073,27 @@ mod tests {
         // Generations are strictly increasing, so a late claim never collides
         // with an earlier one still in flight.
         assert!(second > first);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn check_exe_exists_accepts_only_existing_exe_files() {
+        let dir = std::env::temp_dir().join(format!("ihz-exe-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("Game.EXE");
+        let txt = dir.join("notes.txt");
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::write(&txt, b"").unwrap();
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+        assert!(check_exe_exists(s(&exe)), "extension check is case-insensitive");
+        assert!(!check_exe_exists(s(&txt)), "non-.exe files are refused");
+        assert!(!check_exe_exists(s(&dir.join("missing.exe"))));
+        // A directory named like an executable is not a file.
+        let fake = dir.join("folder.exe");
+        std::fs::create_dir_all(&fake).unwrap();
+        assert!(!check_exe_exists(s(&fake)));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

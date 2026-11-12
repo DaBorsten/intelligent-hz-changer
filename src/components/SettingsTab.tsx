@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
+import { isWindows } from "../platform";
 import { useTheme } from "../useTheme";
 import { SegmentedControl } from "./SegmentedControl";
 import { Switch } from "./Switch";
@@ -18,6 +19,13 @@ interface AppSettings {
   check_updates: boolean;
   language: string;
   debug_logging: boolean;
+  scan_interval_ms: number;
+  process_detection: string;
+}
+
+/** Default scan interval of a detection method, in ms (mirrors the backend). */
+function defaultInterval(detection: string): number {
+  return detection === "performance" ? 1000 : 2000;
 }
 
 const DEFAULT: AppSettings = {
@@ -28,6 +36,8 @@ const DEFAULT: AppSettings = {
   check_updates: true,
   language: "de",
   debug_logging: false,
+  scan_interval_ms: 2000,
+  process_detection: "compat",
 };
 
 function SettingRow({
@@ -214,6 +224,9 @@ export function SettingsTab() {
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const { setTheme } = useTheme();
   const autoCheckDone = useRef(false);
+  // Whether this Windows supports the fast process query; without it there is
+  // no method to choose between.
+  const [fastAvailable, setFastAvailable] = useState(false);
 
   useEffect(() => {
     invoke<AppSettings>("load_settings")
@@ -224,6 +237,9 @@ export function SettingsTab() {
       .catch(() => undefined);
     getVersion()
       .then(setVersion)
+      .catch(() => undefined);
+    invoke<boolean>("get_fast_detection_available")
+      .then(setFastAvailable)
       .catch(() => undefined);
   }, []);
 
@@ -316,6 +332,32 @@ export function SettingsTab() {
     { value: "en", label: t("settings.langEN") },
   ];
 
+  const detectionOptions = [
+    { value: "compat", label: t("settings.detectionCompat") },
+    { value: "performance", label: t("settings.detectionPerformance") },
+  ];
+
+  // Half a second is only affordable with the fast query.
+  const fast = fastAvailable && settings.process_detection === "performance";
+  const intervalOptions = [...(fast ? [500] : []), 1000, 2000, 3000, 5000].map(
+    (ms) => ({
+      value: String(ms),
+      label: t("settings.scanIntervalValue", {
+        secs: (ms / 1000).toLocaleString(i18n.language),
+      }),
+    }),
+  );
+
+  function changeDetection(detection: string) {
+    let ms = settings.scan_interval_ms;
+    // An interval left at its default follows the new method's default.
+    if (ms === defaultInterval(settings.process_detection)) {
+      ms = defaultInterval(detection);
+    }
+    if (detection !== "performance") ms = Math.max(ms, 1000);
+    void patch({ process_detection: detection, scan_interval_ms: ms });
+  }
+
   return (
     <>
       {showDialog &&
@@ -389,6 +431,36 @@ export function SettingsTab() {
               <Switch
                 checked={settings.start_minimized}
                 onChange={(v) => void patch({ start_minimized: v })}
+              />
+            </SettingRow>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold mb-2.5">
+            {t("settings.sectionDetection")}
+          </h2>
+          <div className="card px-4">
+            {isWindows && fastAvailable && (
+              <SettingRow
+                label={t("settings.detectionLabel")}
+                description={t("settings.detectionDesc")}
+              >
+                <SegmentedControl
+                  options={detectionOptions}
+                  value={settings.process_detection}
+                  onChange={changeDetection}
+                />
+              </SettingRow>
+            )}
+            <SettingRow
+              label={t("settings.scanIntervalLabel")}
+              description={t("settings.scanIntervalDesc")}
+            >
+              <SegmentedControl
+                options={intervalOptions}
+                value={String(settings.scan_interval_ms)}
+                onChange={(v) => void patch({ scan_interval_ms: Number(v) })}
               />
             </SettingRow>
           </div>

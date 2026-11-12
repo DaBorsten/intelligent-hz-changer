@@ -395,6 +395,57 @@ mod inner {
             Err(format!("ChangeDisplaySettingsExW failed: {}", result.0))
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn wide_strings_round_trip_with_a_terminator() {
+            let w = to_wide(r"\\.\DISPLAY1");
+            assert_eq!(w.last(), Some(&0));
+            assert_eq!(from_wide(&w), r"\\.\DISPLAY1");
+            assert_eq!(from_wide(&to_wide("Bildschirm ü")), "Bildschirm ü");
+        }
+
+        #[test]
+        fn from_wide_stops_at_the_first_nul_or_the_end() {
+            let mut buf = [0u16; 8];
+            buf[..3].copy_from_slice(&[b'a' as u16, b'b' as u16, b'c' as u16]);
+            buf[4] = b'x' as u16; // garbage after the terminator is ignored
+            assert_eq!(from_wide(&buf), "abc");
+            assert_eq!(from_wide(&[b'h' as u16, b'i' as u16]), "hi");
+            assert_eq!(from_wide(&[]), "");
+        }
+
+        #[test]
+        fn strip_wmi_suffix_drops_only_a_numeric_tail() {
+            assert_eq!(
+                strip_wmi_suffix(r"DISPLAY\GSM5B7F\5&2a1b3c4d&0&UID4352_0"),
+                r"DISPLAY\GSM5B7F\5&2a1b3c4d&0&UID4352"
+            );
+            assert_eq!(strip_wmi_suffix("ABC_12"), "ABC");
+            assert_eq!(strip_wmi_suffix("ABC_x1"), "ABC_x1");
+            assert_eq!(strip_wmi_suffix("ABC"), "ABC");
+            // A bare trailing underscore has an empty (all-digit) tail.
+            assert_eq!(strip_wmi_suffix("ABC_"), "ABC");
+        }
+
+        #[test]
+        fn device_interface_maps_to_the_wmi_instance_prefix() {
+            let id = r"\\?\DISPLAY#GSM5B7F#5&2a1b3c4d&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+            assert_eq!(
+                device_interface_to_instance_prefix(id).as_deref(),
+                Some(r"DISPLAY\GSM5B7F\5&2A1B3C4D&0&UID4352")
+            );
+            // The prefix must line up with a stripped WMI instance name.
+            let wmi = strip_wmi_suffix(r"DISPLAY\GSM5B7F\5&2a1b3c4d&0&UID4352_0").to_uppercase();
+            assert_eq!(device_interface_to_instance_prefix(id).unwrap(), wmi);
+
+            assert_eq!(device_interface_to_instance_prefix(r"\\?\DISPLAY#GSM"), None);
+            assert_eq!(device_interface_to_instance_prefix(""), None);
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -508,4 +559,22 @@ pub fn set_refresh_rate_for_test(monitor_name: &str, hz: u32) -> Result<bool, St
     return linux::set_refresh_rate_for_test(monitor_name, hz);
     #[cfg(not(target_os = "linux"))]
     set_refresh_rate(monitor_name, hz).map(|()| false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_status_constructors() {
+        let ok = BackendStatus::working();
+        assert!(ok.ok);
+        assert_eq!(ok.code, "ok");
+        assert!(ok.detail.is_empty());
+
+        let bad = BackendStatus::failing("no_xrandr", String::from("xrandr"));
+        assert!(!bad.ok);
+        assert_eq!(bad.code, "no_xrandr");
+        assert_eq!(bad.detail, "xrandr");
+    }
 }

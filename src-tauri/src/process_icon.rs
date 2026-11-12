@@ -112,15 +112,60 @@ mod linux {
     /// field codes (`%U`, `%f`) and often an `env VAR=… ` prefix, so the first
     /// token that is neither is taken as the program.
     fn exec_program(exec: &str) -> Option<String> {
-        for token in exec.split_whitespace() {
-            if token == "env" || token.contains('=') || token.starts_with('%') {
+        for (token, quoted) in exec_tokens(exec) {
+            if !quoted && (token == "env" || token.contains('=') || token.starts_with('%')) {
                 continue;
             }
-            return Path::new(token.trim_matches('"'))
+            return Path::new(&token)
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned());
         }
         None
+    }
+
+    /// Splits an `Exec` value into arguments, honouring the desktop entry
+    /// spec's double-quoting: a quoted argument may contain spaces, and inside
+    /// quotes `\"`, `` \` ``, `\$` and `\\` stand for the literal character.
+    /// Each token carries whether any part of it was quoted.
+    fn exec_tokens(exec: &str) -> Vec<(String, bool)> {
+        let mut tokens = Vec::new();
+        let mut current = String::new();
+        let mut quoted = false;
+        let mut in_quotes = false;
+        let mut started = false;
+        let mut chars = exec.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => {
+                    in_quotes = !in_quotes;
+                    quoted = true;
+                    started = true;
+                }
+                '\\' if in_quotes => match chars.next() {
+                    Some(n @ ('"' | '`' | '$' | '\\')) => current.push(n),
+                    Some(n) => {
+                        current.push('\\');
+                        current.push(n);
+                    }
+                    None => current.push('\\'),
+                },
+                c if c.is_whitespace() && !in_quotes => {
+                    if started {
+                        tokens.push((std::mem::take(&mut current), quoted));
+                    }
+                    quoted = false;
+                    started = false;
+                }
+                c => {
+                    current.push(c);
+                    started = true;
+                }
+            }
+        }
+        if started {
+            tokens.push((current, quoted));
+        }
+        tokens
     }
 
     /// Desktop entries keyed by the executable they launch, plus a weaker index
@@ -282,6 +327,137 @@ mod linux {
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(&bytes)
         ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Fresh scratch directory per test, removed on drop.
+        struct TempDir(PathBuf);
+        impl TempDir {
+            fn new(tag: &str) -> Self {
+                let p = std::env::temp_dir()
+                    .join(format!("ihz-icon-{tag}-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&p);
+                std::fs::create_dir_all(&p).unwrap();
+                Self(p)
+            }
+            fn write(&self, name: &str, content: &[u8]) -> PathBuf {
+                let p = self.0.join(name);
+                std::fs::write(&p, content).unwrap();
+                p
+            }
+        }
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        #[test]
+        fn exec_program_skips_env_and_field_codes() {
+            assert_eq!(exec_program("/usr/bin/steam %U").as_deref(), Some("steam"));
+            assert_eq!(
+                exec_program("env GDK_BACKEND=x11 FOO=1 /opt/app/bin/app --flag %f").as_deref(),
+                Some("app")
+            );
+            assert_eq!(exec_program(r#""/opt/game/run.sh" %u"#).as_deref(), Some("run.sh"));
+            assert_eq!(exec_program(r#""/opt/My App/run" %u"#).as_deref(), Some("run"));
+            assert_eq!(
+                exec_program(r#"env A=1 "/opt/My Games/the game" --x"#).as_deref(),
+                Some("the game")
+            );
+            // Escapes inside quotes per the desktop entry spec.
+            assert_eq!(
+                exec_program(r#""/opt/say \"hi\"/bin\\x" %f"#).as_deref(),
+                Some(r"bin\x")
+            );
+            // A quoted path containing "=" is a program, not an env assignment.
+            assert_eq!(exec_program(r#""/opt/a=b/game""#).as_deref(), Some("game"));
+            assert_eq!(exec_program("firefox").as_deref(), Some("firefox"));
+            assert_eq!(exec_program("env %U"), None);
+            assert_eq!(exec_program(""), None);
+        }
+
+        #[test]
+        fn desktop_key_reads_only_the_main_group() {
+            let dir = TempDir::new("key");
+            let f = dir.write(
+                "app.desktop",
+                b"# comment\n\
+                  [Desktop Entry]\n\
+                  Name=Game\n\
+                  IconTheme=ignored\n\
+                  Icon = \n\
+                  Icon=game-icon\n\
+                  Exec=/usr/bin/game %U\n\
+                  \n\
+                  [Desktop Action new-window]\n\
+                  Exec=/usr/bin/other\n\
+                  TryExec=/usr/bin/other\n",
+            );
+            assert_eq!(desktop_key(&f, "Icon").as_deref(), Some("game-icon"));
+            assert_eq!(desktop_key(&f, "Exec").as_deref(), Some("/usr/bin/game %U"));
+            // Only present in an action group.
+            assert_eq!(desktop_key(&f, "TryExec"), None);
+            assert_eq!(desktop_key(&f, "Missing"), None);
+            assert_eq!(desktop_key(&dir.0.join("nope.desktop"), "Icon"), None);
+        }
+
+        #[test]
+        fn desktop_key_ignores_keys_before_the_group() {
+            let dir = TempDir::new("pre");
+            let f = dir.write("a.desktop", b"Icon=early\n[Other]\nIcon=other\n");
+            assert_eq!(desktop_key(&f, "Icon"), None);
+        }
+
+        #[test]
+        fn desktop_files_include_one_nested_level() {
+            let dir = TempDir::new("files");
+            dir.write("a.desktop", b"");
+            dir.write("readme.txt", b"");
+            std::fs::create_dir_all(dir.0.join("kde4/deeper")).unwrap();
+            dir.write("kde4/b.desktop", b"");
+            dir.write("kde4/deeper/c.desktop", b"");
+            let mut names: Vec<String> = desktop_files(&dir.0)
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            assert_eq!(names, ["a.desktop", "b.desktop"]);
+            assert!(desktop_files(&dir.0.join("missing")).is_empty());
+        }
+
+        #[test]
+        fn absolute_icon_paths_must_exist() {
+            let dir = TempDir::new("abs");
+            let f = dir.write("icon.png", b"x");
+            assert_eq!(resolve_icon_path(f.to_str().unwrap()), Some(f.clone()));
+            assert_eq!(resolve_icon_path(dir.0.join("gone.png").to_str().unwrap()), None);
+            // A directory is not an icon.
+            assert_eq!(resolve_icon_path(dir.0.to_str().unwrap()), None);
+        }
+
+        #[test]
+        fn encode_icon_file_picks_mime_and_rejects_the_rest() {
+            let dir = TempDir::new("enc");
+            let png = dir.write("a.PNG", b"abc");
+            assert_eq!(encode_icon_file(&png).as_deref(), Some("data:image/png;base64,YWJj"));
+            let svg = dir.write("a.svg", b"<svg/>");
+            assert!(encode_icon_file(&svg).unwrap().starts_with("data:image/svg+xml;base64,"));
+            let jpg = dir.write("a.jpeg", b"");
+            assert_eq!(encode_icon_file(&jpg).as_deref(), Some("data:image/jpeg;base64,"));
+
+            assert_eq!(encode_icon_file(&dir.write("a.xpm", b"x")), None);
+            assert_eq!(encode_icon_file(&dir.write("noext", b"x")), None);
+            assert_eq!(encode_icon_file(&dir.0.join("missing.png")), None);
+
+            let big = dir.write("big.png", &vec![0u8; MAX_ICON_BYTES as usize + 1]);
+            assert_eq!(encode_icon_file(&big), None);
+            let edge = dir.write("edge.png", &vec![0u8; MAX_ICON_BYTES as usize]);
+            assert!(encode_icon_file(&edge).is_some());
+        }
     }
 }
 
@@ -458,3 +634,117 @@ fn encode_rgba_as_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Splits a PNG into (tag, data, crc) chunks after checking the signature.
+    fn chunks(png: &[u8]) -> Vec<([u8; 4], Vec<u8>, u32)> {
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let mut out = Vec::new();
+        let mut i = 8;
+        while i < png.len() {
+            let len = u32::from_be_bytes(png[i..i + 4].try_into().unwrap()) as usize;
+            let tag: [u8; 4] = png[i + 4..i + 8].try_into().unwrap();
+            let data = png[i + 8..i + 8 + len].to_vec();
+            let crc = u32::from_be_bytes(png[i + 8 + len..i + 12 + len].try_into().unwrap());
+            out.push((tag, data, crc));
+            i += 12 + len;
+        }
+        assert_eq!(i, png.len());
+        out
+    }
+
+    /// Reference CRC-32 (IEEE), independent of the encoder's implementation.
+    fn crc32(tag: &[u8], data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &b in tag.iter().chain(data) {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            }
+        }
+        !crc
+    }
+
+    /// Inflates a zlib stream made only of stored (uncompressed) blocks.
+    fn inflate_stored(z: &[u8]) -> (Vec<u8>, u32) {
+        assert_eq!((z[0] as u16 * 256 + z[1] as u16) % 31, 0, "zlib header check");
+        let mut out = Vec::new();
+        let mut i = 2;
+        loop {
+            let last = z[i] & 1 == 1;
+            assert_eq!(z[i] >> 1, 0, "only stored blocks expected");
+            let len = u16::from_le_bytes([z[i + 1], z[i + 2]]);
+            let nlen = u16::from_le_bytes([z[i + 3], z[i + 4]]);
+            assert_eq!(len, !nlen);
+            out.extend_from_slice(&z[i + 5..i + 5 + len as usize]);
+            i += 5 + len as usize;
+            if last {
+                break;
+            }
+        }
+        let adler = u32::from_be_bytes(z[i..i + 4].try_into().unwrap());
+        assert_eq!(i + 4, z.len());
+        (out, adler)
+    }
+
+    fn png_for(width: u32, height: u32) -> (Vec<u8>, Vec<u8>) {
+        let rgba: Vec<u8> = (0..width * height * 4).map(|i| (i % 251) as u8).collect();
+        (encode_rgba_as_png(&rgba, width, height), rgba)
+    }
+
+    #[test]
+    fn png_has_valid_chunks_and_header() {
+        let (png, _) = png_for(32, 32);
+        let c = chunks(&png);
+        let tags: Vec<&[u8; 4]> = c.iter().map(|(t, _, _)| t).collect();
+        assert_eq!(tags, vec![b"IHDR", b"IDAT", b"IEND"]);
+
+        for (tag, data, crc) in &c {
+            assert_eq!(*crc, crc32(tag, data), "bad CRC in {:?}", std::str::from_utf8(tag));
+        }
+        // Well-known constant: CRC of an empty IEND chunk.
+        assert_eq!(c[2].2, 0xAE42_6082);
+
+        let ihdr = &c[0].1;
+        assert_eq!(u32::from_be_bytes(ihdr[0..4].try_into().unwrap()), 32);
+        assert_eq!(u32::from_be_bytes(ihdr[4..8].try_into().unwrap()), 32);
+        assert_eq!(&ihdr[8..], &[8, 6, 0, 0, 0]);
+    }
+
+    #[test]
+    fn idat_decodes_back_to_the_input_pixels() {
+        let (png, rgba) = png_for(32, 32);
+        let idat = &chunks(&png)[1].1;
+        let (raw, adler) = inflate_stored(idat);
+
+        // One filter byte (0 = None) in front of every scanline.
+        let stride = 32 * 4;
+        assert_eq!(raw.len(), 32 * (stride + 1));
+        let mut pixels = Vec::new();
+        for line in raw.chunks(stride + 1) {
+            assert_eq!(line[0], 0);
+            pixels.extend_from_slice(&line[1..]);
+        }
+        assert_eq!(pixels, rgba);
+
+        // Reference Adler-32.
+        let (mut a, mut b) = (1u32, 0u32);
+        for &x in &raw {
+            a = (a + x as u32) % 65521;
+            b = (b + a) % 65521;
+        }
+        assert_eq!(adler, (b << 16) | a);
+    }
+
+    #[test]
+    fn large_images_split_into_multiple_stored_blocks() {
+        // 128x128 RGBA = 65,664 raw bytes, just over one 65,535-byte block.
+        let (png, rgba) = png_for(128, 128);
+        let (raw, _) = inflate_stored(&chunks(&png)[1].1);
+        let pixels: Vec<u8> = raw.chunks(128 * 4 + 1).flat_map(|l| l[1..].to_vec()).collect();
+        assert_eq!(pixels, rgba);
+    }
+}
